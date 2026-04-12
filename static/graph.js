@@ -3,12 +3,104 @@
   let graph = { nodes: [], links: [] };
   let simulation = null;
   let selected = null;
+  let activeTag = null;
 
   async function loadGraph() {
     const res = await fetch('/api/graph');
     graph = await res.json();
     render();
     updateStats();
+  }
+
+  async function loadTags() {
+    try {
+      const res = await fetch('/api/tags');
+      const data = await res.json();
+      renderTags(data.tags || []);
+    } catch (e) {
+      console.error('[tags]', e);
+    }
+  }
+
+  function renderTags(tags) {
+    const themes = tags.filter(t => t.count >= 2);
+    const orphans = tags.filter(t => t.count < 2);
+    renderTagList('tag-list', themes);
+    renderTagList('orphan-list', orphans);
+    const heading = document.getElementById('orphan-heading');
+    const counter = document.getElementById('orphan-count');
+    heading.hidden = orphans.length === 0;
+    counter.textContent = orphans.length ? `(${orphans.length})` : '';
+  }
+
+  function renderTagList(ulId, tags) {
+    const ul = document.getElementById(ulId);
+    ul.innerHTML = '';
+    for (const t of tags) {
+      const li = document.createElement('li');
+      if (!t.resolved) li.classList.add('unresolved');
+      if (activeTag === t.target) li.classList.add('active');
+
+      const name = document.createElement('span');
+      name.className = 'tag-name';
+      name.textContent = t.target;
+
+      const count = document.createElement('span');
+      count.className = 'tag-count';
+      count.textContent = t.count;
+
+      li.appendChild(name);
+      li.appendChild(count);
+      li.addEventListener('click', () => {
+        if (activeTag === t.target) {
+          setActiveTag(null);
+        } else {
+          setActiveTag(t.target);
+        }
+      });
+      ul.appendChild(li);
+    }
+  }
+
+  function setActiveTag(target) {
+    activeTag = target;
+    // Clear search input so the two filters don't overlap confusingly.
+    if (target) {
+      const input = document.getElementById('search');
+      if (input.value) {
+        input.value = '';
+        searchSeq++;
+      }
+    }
+    // Update active class on both lists.
+    document.querySelectorAll('#tag-list li, #orphan-list li').forEach(li => {
+      const name = li.querySelector('.tag-name')?.textContent;
+      li.classList.toggle('active', name === target);
+    });
+    // Apply the filter to the graph.
+    if (!target) {
+      clearDimming();
+      return;
+    }
+    const matches = new Set();
+    for (const l of graph.links) {
+      if (linkEnd(l.target) === target) {
+        matches.add(linkEnd(l.source));
+      }
+    }
+    // Also include the tag itself as a node if it resolves to a real note.
+    matches.add(target);
+    applyDimming(matches);
+  }
+
+  function applyDimming(matchSet) {
+    svg.selectAll('.node circle').attr('opacity', d => matchSet.has(d.id) ? 1 : 0.1);
+    svg.selectAll('.node text').attr('opacity', d => matchSet.has(d.id) ? 1 : 0.1);
+  }
+
+  function clearDimming() {
+    svg.selectAll('.node circle').attr('opacity', 1);
+    svg.selectAll('.node text').attr('opacity', 1);
   }
 
   function updateStats() {
@@ -175,10 +267,6 @@
 
   let searchTimer = null;
   let searchSeq = 0;
-  function clearSearch() {
-    svg.selectAll('.node circle').attr('opacity', 1);
-    svg.selectAll('.node text').attr('opacity', 1);
-  }
   async function runSearch(q) {
     const mySeq = ++searchSeq;
     try {
@@ -186,11 +274,7 @@
       if (mySeq !== searchSeq) return; // a newer keystroke won
       const data = await res.json();
       const hits = new Set((data.hits || []).map(h => h.path));
-      svg.selectAll('.node').each(function(d) {
-        const hit = hits.has(d.id);
-        d3.select(this).select('circle').attr('opacity', hit ? 1 : 0.1);
-        d3.select(this).select('text').attr('opacity', hit ? 1 : 0.1);
-      });
+      applyDimming(hits);
     } catch (e) {
       console.error('[search]', e);
     }
@@ -198,9 +282,12 @@
   document.getElementById('search').addEventListener('input', (evt) => {
     const q = evt.target.value.trim();
     if (searchTimer) clearTimeout(searchTimer);
+    // Search and tag filters are mutually exclusive — clear the active tag
+    // as soon as the user starts typing.
+    if (activeTag) setActiveTag(null);
     if (!q) {
       searchSeq++;
-      clearSearch();
+      clearDimming();
       return;
     }
     searchTimer = setTimeout(() => runSearch(q), 150);
@@ -216,12 +303,14 @@
   chip.addEventListener('click', async () => {
     chip.hidden = true;
     const prevId = selected ? selected.id : null;
-    await loadGraph();
+    await Promise.all([loadGraph(), loadTags()]);
     if (prevId) {
       const still = graph.nodes.find(n => n.id === prevId);
       if (still) selectNode(still);
     }
+    if (activeTag) setActiveTag(activeTag); // re-apply filter after reload
   });
 
   loadGraph();
+  loadTags();
 })();

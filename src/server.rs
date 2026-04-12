@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -70,6 +70,18 @@ struct SearchResponse {
     hits: Vec<SearchHit>,
 }
 
+#[derive(Serialize)]
+struct TagInfo {
+    target: String,
+    count: usize,
+    resolved: bool,
+}
+
+#[derive(Serialize)]
+struct TagsResponse {
+    tags: Vec<TagInfo>,
+}
+
 pub async fn run(
     db: Arc<FlowstoneDb>,
     notes_dir: PathBuf,
@@ -97,6 +109,7 @@ pub async fn run(
         .route("/static/style.css", get(style_css))
         .route("/api/graph", get(graph_json))
         .route("/api/search", get(search_json))
+        .route("/api/tags", get(tags_json))
         .route("/api/events", get(events))
         .with_state(state);
 
@@ -211,6 +224,59 @@ fn build_graph(db: &FlowstoneDb) -> GraphResponse {
     nodes.sort_by(|a, b| a.id.cmp(&b.id));
 
     GraphResponse { nodes, links }
+}
+
+async fn tags_json(State(state): State<AppState>) -> Response {
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || build_tags(db.as_ref()))
+        .await
+        .unwrap_or_else(|_| TagsResponse { tags: Vec::new() });
+    Json(result).into_response()
+}
+
+fn build_tags(db: &FlowstoneDb) -> TagsResponse {
+    let note_paths: HashSet<String> = match db.run_default("?[path] := *notes{path}") {
+        Ok(r) => r
+            .rows
+            .into_iter()
+            .filter_map(|row| {
+                row.into_iter()
+                    .next()
+                    .and_then(|v| v.get_str().map(String::from))
+            })
+            .collect(),
+        Err(e) => {
+            eprintln!("[tags] notes query failed: {}", e);
+            HashSet::new()
+        }
+    };
+
+    let mut tags = Vec::new();
+    match db.run_default("?[target, count(source)] := *links[source, target] :order -count(source)")
+    {
+        Ok(r) => {
+            for row in r.rows {
+                let target = row
+                    .first()
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string();
+                let count = row.get(1).and_then(|v| v.get_int()).unwrap_or(0) as usize;
+                if target.is_empty() {
+                    continue;
+                }
+                let resolved = note_paths.contains(&target);
+                tags.push(TagInfo {
+                    target,
+                    count,
+                    resolved,
+                });
+            }
+        }
+        Err(e) => eprintln!("[tags] links query failed: {}", e),
+    }
+
+    TagsResponse { tags }
 }
 
 async fn search_json(

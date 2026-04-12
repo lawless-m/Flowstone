@@ -95,6 +95,84 @@ main {
   transition: stroke-opacity 150ms;
 }
 
+aside#tags {
+  width: 220px;
+  background: var(--bg-alt);
+  border-right: 1px solid var(--bg-deep);
+  padding: 16px 14px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+aside#tags h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+  font-weight: 600;
+}
+
+aside#tags h3#orphan-heading {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--bg-deep);
+}
+
+#orphan-count {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  margin-left: 4px;
+}
+
+#tag-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+#tag-list li {
+  padding: 4px 8px;
+  margin: 1px -8px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: background 120ms;
+}
+
+#tag-list li:hover {
+  background: var(--bg);
+}
+
+#tag-list li.active {
+  background: var(--bg-deep);
+  color: var(--text);
+}
+
+#tag-list li .tag-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#tag-list li.unresolved .tag-name {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+#tag-list li .tag-count {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
 aside#details {
   width: 320px;
   background: var(--bg-alt);
