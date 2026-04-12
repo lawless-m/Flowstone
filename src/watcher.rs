@@ -7,9 +7,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 use crate::pipeline;
 use crate::server::AppState;
 
-pub async fn watch(
-    state: AppState,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn watch(state: AppState) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (async_tx, mut async_rx) = tokio_mpsc::unbounded_channel::<()>();
 
     // Spawn a dedicated OS thread to own the notify watcher and forward its

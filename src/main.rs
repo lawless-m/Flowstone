@@ -86,12 +86,10 @@ fn validate_dir(path: &str) -> PathBuf {
 
 fn find_db_path(args: &[String], notes_dir: &PathBuf) -> PathBuf {
     if let Some(pos) = args.iter().position(|a| a == "--db") {
-        args.get(pos + 1)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                eprintln!("Error: --db requires a path");
-                process::exit(1);
-            })
+        args.get(pos + 1).map(PathBuf::from).unwrap_or_else(|| {
+            eprintln!("Error: --db requires a path");
+            process::exit(1);
+        })
     } else {
         notes_dir.join(".flowstone.db")
     }
