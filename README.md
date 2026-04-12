@@ -2,8 +2,9 @@
 
 A small Rust tool that turns a folder of Markdown notes into a queryable
 knowledge graph. Point it at your notes, and it parses every `[[wiki-link]]`,
-loads the lot into [CozoDB](https://www.cozodb.org/), and hands you either a
-Datalog REPL or a little web server with a live graph view.
+loads the lot into [CozoDB](https://github.com/lawless-m/cozo-redb) (our
+fork, carrying the redb storage backend), and hands you either a Datalog
+REPL or a little web server with a live graph view.
 
 The name is deliberate: Obsidian is volcanic glass — cooled in a flash.
 Flowstone forms slowly in caves, layer by layer. A knowledge base that
