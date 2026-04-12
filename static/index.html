@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flowstone — knowledge graph</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Flowstone</h1>
+  <input type="search" id="search" placeholder="Search notes…" autocomplete="off" spellcheck="false">
+  <span id="stats"></span>
+  <button id="reload-chip" hidden>Graph updated — click to refresh</button>
+</header>
+<main>
+  <svg id="graph"></svg>
+  <aside id="details" hidden>
+    <button id="close-details" aria-label="Close">&times;</button>
+    <h2 id="detail-title"></h2>
+    <div id="detail-meta"></div>
+    <h3>Backlinks</h3>
+    <ul id="detail-backlinks"></ul>
+    <h3>Forward links</h3>
+    <ul id="detail-forward"></ul>
+  </aside>
+</main>
+<script src="/static/graph.js"></script>
+</body>
+</html>
