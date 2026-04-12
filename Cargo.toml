@@ -15,3 +15,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 notify = "6"
 futures = "0.3"
+
+# graph_builder 0.4.1 on crates.io calls self.list.into_par_iter().copied() in
+# edgelist.rs:125, which no longer type-checks under rayon 1.11+ because
+# Box<[T]>::into_par_iter now yields owned tuples rather than references.
+# Matt's fork carries the fix on fix/edgelist-par-iter (PR to neo4j-labs/graph
+# pending). Route both crates through the fork until that PR merges.
+[patch.crates-io]
+graph = { git = "https://github.com/lawless-m/graph", branch = "fix/edgelist-par-iter" }
+graph_builder = { git = "https://github.com/lawless-m/graph", branch = "fix/edgelist-par-iter" }
