@@ -82,6 +82,23 @@ struct TagsResponse {
     tags: Vec<TagInfo>,
 }
 
+#[derive(serde::Deserialize)]
+struct MissingTagsParams {
+    note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct MissingTagHit {
+    note_path: String,
+    missing_tag: String,
+    snippet: String,
+}
+
+#[derive(Serialize)]
+struct MissingTagsResponse {
+    hits: Vec<MissingTagHit>,
+}
+
 pub async fn run(
     db: Arc<FlowstoneDb>,
     notes_dir: PathBuf,
@@ -110,6 +127,7 @@ pub async fn run(
         .route("/api/graph", get(graph_json))
         .route("/api/search", get(search_json))
         .route("/api/tags", get(tags_json))
+        .route("/api/missing-tags", get(missing_tags_json))
         .route("/api/events", get(events))
         .with_state(state);
 
@@ -277,6 +295,155 @@ fn build_tags(db: &FlowstoneDb) -> TagsResponse {
     }
 
     TagsResponse { tags }
+}
+
+async fn missing_tags_json(
+    State(state): State<AppState>,
+    Query(params): Query<MissingTagsParams>,
+) -> Response {
+    let db = state.db.clone();
+    let filter = params.note;
+    let result = tokio::task::spawn_blocking(move || build_missing_tags(db.as_ref(), filter))
+        .await
+        .unwrap_or_else(|_| MissingTagsResponse { hits: Vec::new() });
+    Json(result).into_response()
+}
+
+fn build_missing_tags(db: &FlowstoneDb, note_filter: Option<String>) -> MissingTagsResponse {
+    // Fetch every known tag target from the links relation. These are the
+    // vocabulary of things we'll look for in note bodies.
+    let tag_targets: Vec<String> = match db.run_default("?[target] := *links[_, target]") {
+        Ok(r) => r
+            .rows
+            .into_iter()
+            .filter_map(|row| {
+                row.into_iter()
+                    .next()
+                    .and_then(|v| v.get_str().map(String::from))
+            })
+            .filter(|s| s.len() >= 3) // skip two-letter targets — too noisy
+            .collect(),
+        Err(e) => {
+            eprintln!("[missing-tags] links query failed: {}", e);
+            return MissingTagsResponse { hits: Vec::new() };
+        }
+    };
+    if tag_targets.is_empty() {
+        return MissingTagsResponse { hits: Vec::new() };
+    }
+
+    // Fetch note bodies, optionally filtered to a single path.
+    let notes_script = if note_filter.is_some() {
+        "?[path, body] := *notes{path, body}, path = $path"
+    } else {
+        "?[path, body] := *notes{path, body}"
+    };
+    let mut params: std::collections::BTreeMap<String, cozo::DataValue> =
+        std::collections::BTreeMap::new();
+    if let Some(p) = &note_filter {
+        params.insert("path".to_string(), cozo::DataValue::Str(p.as_str().into()));
+    }
+    let notes_result = match db.run_script(notes_script, params, cozo::ScriptMutability::Immutable)
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[missing-tags] notes query failed: {}", e);
+            return MissingTagsResponse { hits: Vec::new() };
+        }
+    };
+
+    let wiki_link_re = match regex::Regex::new(r"\[\[[^\]]*\]\]") {
+        Ok(r) => r,
+        Err(_) => return MissingTagsResponse { hits: Vec::new() },
+    };
+
+    let mut hits = Vec::new();
+    for row in notes_result.rows {
+        let path = row
+            .first()
+            .and_then(|v| v.get_str())
+            .unwrap_or("")
+            .to_string();
+        let body = row
+            .get(1)
+            .and_then(|v| v.get_str())
+            .unwrap_or("")
+            .to_string();
+        if path.is_empty() || body.is_empty() {
+            continue;
+        }
+
+        // Strip existing wiki-links from the body so already-tagged text
+        // doesn't get re-flagged. Replace with spaces of equal length so
+        // match offsets are preserved for snippet extraction.
+        let stripped = wiki_link_re.replace_all(&body, |caps: &regex::Captures<'_>| {
+            " ".repeat(caps[0].len())
+        });
+
+        // Build a single alternation regex over all tags for this note,
+        // escaping each and excluding the note's own path (so the note
+        // doesn't flag its own title mentions). Word boundaries ensure we
+        // don't match substrings like "rust" inside "trust".
+        let alternation: Vec<String> = tag_targets
+            .iter()
+            .filter(|t| t.as_str() != path.as_str())
+            .map(|t| regex::escape(t))
+            .collect();
+        if alternation.is_empty() {
+            continue;
+        }
+        let pattern = format!(r"(?i)\b({})\b", alternation.join("|"));
+        let tag_re = match regex::Regex::new(&pattern) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[missing-tags] regex build failed: {}", e);
+                continue;
+            }
+        };
+
+        // Record at most one hit per (note, tag) pair — the first occurrence
+        // is enough to show the user the context.
+        let mut seen: HashSet<String> = HashSet::new();
+        for m in tag_re.find_iter(&stripped) {
+            let matched = m.as_str().to_lowercase();
+            if !seen.insert(matched.clone()) {
+                continue;
+            }
+            let snippet = snippet_around(&stripped, m.start(), m.end());
+            hits.push(MissingTagHit {
+                note_path: path.clone(),
+                missing_tag: matched,
+                snippet,
+            });
+        }
+    }
+
+    MissingTagsResponse { hits }
+}
+
+fn snippet_around(text: &str, start: usize, end: usize) -> String {
+    const RADIUS: usize = 40;
+    let pre_start = text[..start]
+        .char_indices()
+        .rev()
+        .take(RADIUS)
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let post_end = text[end..]
+        .char_indices()
+        .take(RADIUS)
+        .last()
+        .map(|(i, c)| end + i + c.len_utf8())
+        .unwrap_or(text.len());
+    let prefix = if pre_start > 0 { "…" } else { "" };
+    let suffix = if post_end < text.len() { "…" } else { "" };
+    let snippet: String = text[pre_start..post_end]
+        .replace('\n', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("{}{}{}", prefix, snippet, suffix)
 }
 
 async fn search_json(

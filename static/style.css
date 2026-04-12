@@ -257,3 +257,22 @@ aside ul li.empty {
   color: var(--text-dim);
   font-style: italic;
 }
+
+#detail-missing-tags li {
+  padding: 6px 0;
+  display: block;
+}
+
+#detail-missing-tags .missing-tag-name {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+#detail-missing-tags .missing-tag-snippet {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-top: 2px;
+  line-height: 1.4;
+}

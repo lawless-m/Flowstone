@@ -4,6 +4,7 @@
   let simulation = null;
   let selected = null;
   let activeTag = null;
+  let missingTagSeq = 0;
 
   async function loadGraph() {
     const res = await fetch('/api/graph');
@@ -101,6 +102,45 @@
   function clearDimming() {
     svg.selectAll('.node circle').attr('opacity', 1);
     svg.selectAll('.node text').attr('opacity', 1);
+  }
+
+  async function loadMissingTags(notePath) {
+    const mySeq = ++missingTagSeq;
+    const ul = document.getElementById('detail-missing-tags');
+    ul.innerHTML = '<li class="empty">Scanning…</li>';
+    try {
+      const res = await fetch('/api/missing-tags?note=' + encodeURIComponent(notePath));
+      if (mySeq !== missingTagSeq) return; // a newer selection won
+      const data = await res.json();
+      renderMissingTags(data.hits || []);
+    } catch (e) {
+      console.error('[missing-tags]', e);
+      ul.innerHTML = '<li class="empty">(failed to load)</li>';
+    }
+  }
+
+  function renderMissingTags(hits) {
+    const ul = document.getElementById('detail-missing-tags');
+    ul.innerHTML = '';
+    if (hits.length === 0) {
+      const li = document.createElement('li');
+      li.textContent = '(none)';
+      li.className = 'empty';
+      ul.appendChild(li);
+      return;
+    }
+    for (const h of hits) {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.className = 'missing-tag-name';
+      name.textContent = '[[' + h.missing_tag + ']]';
+      const snippet = document.createElement('span');
+      snippet.className = 'missing-tag-snippet';
+      snippet.textContent = h.snippet;
+      li.appendChild(name);
+      li.appendChild(snippet);
+      ul.appendChild(li);
+    }
   }
 
   function updateStats() {
@@ -254,6 +294,7 @@
     };
     renderList('detail-backlinks', backs);
     renderList('detail-forward', fwds);
+    loadMissingTags(node.id);
 
     const neighbors = new Set([node.id, ...backs, ...fwds]);
     svg.selectAll('.node circle').attr('opacity', d => neighbors.has(d.id) ? 1 : 0.15);
