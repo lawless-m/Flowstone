@@ -4,6 +4,7 @@ use walkdir::WalkDir;
 pub struct Note {
     pub path: String,
     pub title: String,
+    pub body: String,
     pub abs_path: PathBuf,
 }
 
@@ -39,9 +40,12 @@ pub fn scan(root: &Path) -> Vec<Note> {
             .to_string_lossy()
             .into_owned();
 
+        let body = std::fs::read_to_string(file_path).unwrap_or_default();
+
         notes.push(Note {
             path,
             title,
+            body,
             abs_path: file_path.to_path_buf(),
         });
     }

@@ -13,15 +13,23 @@ pub fn open(db_path: &Path) -> FlowstoneDb {
 }
 
 pub fn create_schema(db: &FlowstoneDb) {
-    // Drop existing relations (ignore errors if they don't exist yet)
+    // Drop the FTS index before removing the base relation — cozo's
+    // destroy_relation refuses to drop a relation that still has indices
+    // attached. All three drops are best-effort: on first run none exist yet.
+    let _ = db.run_default("::fts drop notes:ft");
     let _ = db.run_default("::remove notes");
     let _ = db.run_default("::remove links");
 
-    db.run_default(":create notes { path: String => title: String, size: Int, modified: Float }")
-        .expect("Failed to create notes relation");
+    db.run_default(
+        ":create notes { path: String => title: String, body: String, size: Int, modified: Float }",
+    )
+    .expect("Failed to create notes relation");
 
     db.run_default(":create links { source: String, target: String }")
         .expect("Failed to create links relation");
+
+    db.run_default("::fts create notes:ft { fields: [title, body] }")
+        .expect("Failed to create notes FTS index");
 }
 
 pub fn load_notes(db: &FlowstoneDb, notes: &[Note]) {
@@ -43,6 +51,7 @@ pub fn load_notes(db: &FlowstoneDb, notes: &[Note]) {
             DataValue::List(vec![
                 DataValue::Str(note.path.as_str().into()),
                 DataValue::Str(note.title.as_str().into()),
+                DataValue::Str(note.body.as_str().into()),
                 DataValue::Num(Num::Int(size as i64)),
                 DataValue::Num(Num::Float(modified)),
             ])
@@ -53,7 +62,7 @@ pub fn load_notes(db: &FlowstoneDb, notes: &[Note]) {
     params.insert("data".to_string(), DataValue::List(rows));
 
     if let Err(e) = db.run_script(
-        "?[path, title, size, modified] <- $data :put notes {path => title, size, modified}",
+        "?[path, title, body, size, modified] <- $data :put notes {path => title, body, size, modified}",
         params,
         ScriptMutability::Mutable,
     ) {

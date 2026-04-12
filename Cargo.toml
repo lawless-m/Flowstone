@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cozo = { path = "../cozordb/cozo/cozo-core", features = ["storage-redb", "graph-algo"], default-features = false }
+cozo = { path = "../cozordb/cozo/cozo-core", features = ["storage-redb", "graph-algo", "fts"], default-features = false }
 walkdir = "2"
 regex = "1"
 rustyline = "14"

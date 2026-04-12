@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     response::{
         sse::{Event, KeepAlive, Sse},
         Html, IntoResponse, Response,
@@ -53,6 +53,23 @@ struct GraphResponse {
     links: Vec<GraphLink>,
 }
 
+#[derive(serde::Deserialize)]
+struct SearchParams {
+    q: String,
+}
+
+#[derive(Serialize)]
+struct SearchHit {
+    path: String,
+    title: String,
+    score: f64,
+}
+
+#[derive(Serialize)]
+struct SearchResponse {
+    hits: Vec<SearchHit>,
+}
+
 pub async fn run(
     db: Arc<FlowstoneDb>,
     notes_dir: PathBuf,
@@ -79,6 +96,7 @@ pub async fn run(
         .route("/static/graph.js", get(graph_js))
         .route("/static/style.css", get(style_css))
         .route("/api/graph", get(graph_json))
+        .route("/api/search", get(search_json))
         .route("/api/events", get(events))
         .with_state(state);
 
@@ -193,6 +211,64 @@ fn build_graph(db: &FlowstoneDb) -> GraphResponse {
     nodes.sort_by(|a, b| a.id.cmp(&b.id));
 
     GraphResponse { nodes, links }
+}
+
+async fn search_json(
+    State(state): State<AppState>,
+    Query(params): Query<SearchParams>,
+) -> Response {
+    let q = params.q.trim().to_string();
+    if q.is_empty() {
+        return Json(SearchResponse { hits: Vec::new() }).into_response();
+    }
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || run_search(db.as_ref(), &q))
+        .await
+        .unwrap_or_else(|_| SearchResponse { hits: Vec::new() });
+    Json(result).into_response()
+}
+
+fn run_search(db: &FlowstoneDb, q: &str) -> SearchResponse {
+    // cozo's FTS parser requires `query` and `k` to be literals (see
+    // SEARCH.md), so we can't pass `q` as a parameter — we inline it into
+    // the script text. To avoid escaping, we use a cozoscript *raw* string
+    // delimited by a long underscore run (`______"..."______`) so that any
+    // user-supplied quotes, backslashes, etc. pass through verbatim into
+    // tantivy's own query parser, preserving Lucene-style syntax (phrases,
+    // +required, field:value, etc.). The raw-string delimiter would only
+    // collide if the user's query contained the literal sequence `"______`,
+    // which isn't a meaningful search term.
+    let script = format!(
+        "?[path, title, score] := ~notes:ft{{path, title | query: ______\"{}\"______, k: 50, bind_score: score}}",
+        q
+    );
+    match db.run_default(&script) {
+        Ok(r) => {
+            let mut hits = Vec::with_capacity(r.rows.len());
+            for row in r.rows {
+                let path = row
+                    .first()
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string();
+                let title = row
+                    .get(1)
+                    .and_then(|v| v.get_str())
+                    .unwrap_or("")
+                    .to_string();
+                let score = row.get(2).and_then(|v| v.get_float()).unwrap_or(0.0);
+                if path.is_empty() {
+                    continue;
+                }
+                hits.push(SearchHit { path, title, score });
+            }
+            SearchResponse { hits }
+        }
+        Err(e) => {
+            eprintln!("[search] query failed: {}", e);
+            SearchResponse { hits: Vec::new() }
+        }
+    }
 }
 
 async fn events(

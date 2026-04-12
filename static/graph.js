@@ -173,19 +173,37 @@
     });
   }
 
+  let searchTimer = null;
+  let searchSeq = 0;
+  function clearSearch() {
+    svg.selectAll('.node circle').attr('opacity', 1);
+    svg.selectAll('.node text').attr('opacity', 1);
+  }
+  async function runSearch(q) {
+    const mySeq = ++searchSeq;
+    try {
+      const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+      if (mySeq !== searchSeq) return; // a newer keystroke won
+      const data = await res.json();
+      const hits = new Set((data.hits || []).map(h => h.path));
+      svg.selectAll('.node').each(function(d) {
+        const hit = hits.has(d.id);
+        d3.select(this).select('circle').attr('opacity', hit ? 1 : 0.1);
+        d3.select(this).select('text').attr('opacity', hit ? 1 : 0.1);
+      });
+    } catch (e) {
+      console.error('[search]', e);
+    }
+  }
   document.getElementById('search').addEventListener('input', (evt) => {
-    const q = evt.target.value.toLowerCase().trim();
+    const q = evt.target.value.trim();
+    if (searchTimer) clearTimeout(searchTimer);
     if (!q) {
-      svg.selectAll('.node circle').attr('opacity', 1);
-      svg.selectAll('.node text').attr('opacity', 1);
+      searchSeq++;
+      clearSearch();
       return;
     }
-    svg.selectAll('.node').each(function(d) {
-      const hit = d.id.toLowerCase().includes(q) ||
-                  (d.title || '').toLowerCase().includes(q);
-      d3.select(this).select('circle').attr('opacity', hit ? 1 : 0.1);
-      d3.select(this).select('text').attr('opacity', hit ? 1 : 0.1);
-    });
+    searchTimer = setTimeout(() => runSearch(q), 150);
   });
 
   document.getElementById('close-details').addEventListener('click', () => selectNode(null));
