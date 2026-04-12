@@ -6,7 +6,7 @@ mod scanner;
 mod server;
 mod watcher;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
@@ -84,7 +84,7 @@ fn validate_dir(path: &str) -> PathBuf {
     p
 }
 
-fn find_db_path(args: &[String], notes_dir: &PathBuf) -> PathBuf {
+fn find_db_path(args: &[String], notes_dir: &Path) -> PathBuf {
     if let Some(pos) = args.iter().position(|a| a == "--db") {
         args.get(pos + 1).map(PathBuf::from).unwrap_or_else(|| {
             eprintln!("Error: --db requires a path");

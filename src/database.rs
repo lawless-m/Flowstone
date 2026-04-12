@@ -91,9 +91,7 @@ pub fn note_count(db: &DbInstance) -> usize {
         .ok()
         .and_then(|r| r.rows.first().cloned())
         .and_then(|row| row.first().cloned())
-        .and_then(|v| match v {
-            v => v.get_int().map(|i| i as usize),
-        })
+        .and_then(|v| v.get_int().map(|i| i as usize))
         .unwrap_or(0)
 }
 
@@ -102,9 +100,7 @@ pub fn link_count(db: &DbInstance) -> usize {
         .ok()
         .and_then(|r| r.rows.first().cloned())
         .and_then(|row| row.first().cloned())
-        .and_then(|v| match v {
-            v => v.get_int().map(|i| i as usize),
-        })
+        .and_then(|v| v.get_int().map(|i| i as usize))
         .unwrap_or(0)
 }
 
@@ -113,8 +109,6 @@ pub fn dangling_count(db: &DbInstance) -> usize {
         .ok()
         .and_then(|r| r.rows.first().cloned())
         .and_then(|row| row.first().cloned())
-        .and_then(|v| match v {
-            v => v.get_int().map(|i| i as usize),
-        })
+        .and_then(|v| v.get_int().map(|i| i as usize))
         .unwrap_or(0)
 }
