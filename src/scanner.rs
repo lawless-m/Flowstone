@@ -13,6 +13,11 @@ pub fn scan(root: &Path) -> Vec<Note> {
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| {
+            // The root entry itself is never dotfile-filtered — otherwise
+            // passing `.` as the notes directory would prune the whole tree.
+            if e.depth() == 0 {
+                return true;
+            }
             let name = e.file_name().to_string_lossy();
             !name.starts_with('.')
         })
