@@ -1,81 +1,88 @@
-use cozo::DbInstance;
+use std::collections::BTreeMap;
 use std::path::Path;
+
+use cozo::{DataValue, DbInstance, Num, ScriptMutability};
 
 use crate::parser::Link;
 use crate::scanner::Note;
 
 pub fn open(db_path: &Path) -> DbInstance {
-    DbInstance::new("redb", db_path, "")
-        .expect("Failed to open database")
+    DbInstance::new("redb", db_path, "").expect("Failed to open database")
 }
 
 pub fn create_schema(db: &DbInstance) {
-    // Drop existing relations (ignore errors if they don't exist)
+    // Drop existing relations (ignore errors if they don't exist yet)
     let _ = db.run_default("::remove notes");
     let _ = db.run_default("::remove links");
-    let _ = db.run_default("::remove note_lookup");
 
-    db.run_default(
-        ":create notes { path: String => title: String, size: Int, modified: Float }",
-    )
-    .expect("Failed to create notes relation");
+    db.run_default(":create notes { path: String => title: String, size: Int, modified: Float }")
+        .expect("Failed to create notes relation");
 
-    db.run_default(
-        ":create links { source: String, target: String }",
-    )
-    .expect("Failed to create links relation");
-
-    db.run_default(
-        ":create note_lookup { normalised: String => path: String }",
-    )
-    .expect("Failed to create note_lookup relation");
+    db.run_default(":create links { source: String, target: String }")
+        .expect("Failed to create links relation");
 }
 
 pub fn load_notes(db: &DbInstance, notes: &[Note]) {
-    for note in notes {
-        let meta = std::fs::metadata(&note.abs_path).ok();
-        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified = meta
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
+    if notes.is_empty() {
+        return;
+    }
 
-        let path_escaped = note.path.replace('\'', "''");
-        let title_escaped = note.title.replace('\'', "''");
-        let normalised = note.path.to_lowercase();
-        let norm_escaped = normalised.replace('\'', "''");
+    let rows: Vec<DataValue> = notes
+        .iter()
+        .map(|note| {
+            let meta = std::fs::metadata(&note.abs_path).ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
 
-        let script = format!(
-            "?[path, title, size, modified] <- [['{}', '{}', {}, {}]] :put notes {{path => title, size, modified}}",
-            path_escaped, title_escaped, size, modified
-        );
-        if let Err(e) = db.run_default(&script) {
-            eprintln!("Warning: failed to insert note '{}': {}", note.path, e);
-        }
+            DataValue::List(vec![
+                DataValue::Str(note.path.as_str().into()),
+                DataValue::Str(note.title.as_str().into()),
+                DataValue::Num(Num::Int(size as i64)),
+                DataValue::Num(Num::Float(modified)),
+            ])
+        })
+        .collect();
 
-        let lookup_script = format!(
-            "?[normalised, path] <- [['{}', '{}']] :put note_lookup {{normalised => path}}",
-            norm_escaped, path_escaped
-        );
-        if let Err(e) = db.run_default(&lookup_script) {
-            eprintln!("Warning: failed to insert lookup for '{}': {}", note.path, e);
-        }
+    let mut params = BTreeMap::new();
+    params.insert("data".to_string(), DataValue::List(rows));
+
+    if let Err(e) = db.run_script(
+        "?[path, title, size, modified] <- $data :put notes {path => title, size, modified}",
+        params,
+        ScriptMutability::Mutable,
+    ) {
+        eprintln!("Warning: failed to bulk-insert notes: {}", e);
     }
 }
 
 pub fn load_links(db: &DbInstance, links: &[Link]) {
-    for link in links {
-        let source_escaped = link.source.replace('\'', "''");
-        let target_escaped = link.target.replace('\'', "''");
+    if links.is_empty() {
+        return;
+    }
 
-        let script = format!(
-            "?[source, target] <- [['{}', '{}']] :put links {{source, target}}",
-            source_escaped, target_escaped
-        );
-        if let Err(e) = db.run_default(&script) {
-            eprintln!("Warning: failed to insert link '{}' -> '{}': {}", link.source, link.target, e);
-        }
+    let rows: Vec<DataValue> = links
+        .iter()
+        .map(|link| {
+            DataValue::List(vec![
+                DataValue::Str(link.source.as_str().into()),
+                DataValue::Str(link.target.as_str().into()),
+            ])
+        })
+        .collect();
+
+    let mut params = BTreeMap::new();
+    params.insert("data".to_string(), DataValue::List(rows));
+
+    if let Err(e) = db.run_script(
+        "?[source, target] <- $data :put links {source, target}",
+        params,
+        ScriptMutability::Mutable,
+    ) {
+        eprintln!("Warning: failed to bulk-insert links: {}", e);
     }
 }
 
