@@ -1,13 +1,12 @@
-use cozo::DbInstance;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::path::Path;
 
-use crate::database;
+use crate::database::{self, FlowstoneDb};
 use crate::parser;
 use crate::scanner;
 
-pub fn run(db: &DbInstance, notes_dir: &Path) {
+pub fn run(db: &FlowstoneDb, notes_dir: &Path) {
     let history_path = history_path();
     let mut rl = DefaultEditor::new().expect("Failed to create editor");
     let _ = rl.load_history(&history_path);
@@ -81,7 +80,7 @@ pub fn run(db: &DbInstance, notes_dir: &Path) {
     let _ = rl.save_history(&history_path);
 }
 
-fn submit(db: &DbInstance, buffer: &mut String, rl: &mut DefaultEditor) {
+fn submit(db: &FlowstoneDb, buffer: &mut String, rl: &mut DefaultEditor) {
     let trimmed = buffer.trim();
     if !trimmed.is_empty() {
         let program = trimmed.to_string();
@@ -101,7 +100,7 @@ fn history_path() -> String {
     }
 }
 
-fn run_query(db: &DbInstance, query: &str) {
+fn run_query(db: &FlowstoneDb, query: &str) {
     match db.run_default(query) {
         Ok(result) => print_table(&result.headers, &result.rows),
         Err(e) => eprintln!("Error: {}", e),
@@ -159,7 +158,7 @@ fn print_row(cells: &[impl AsRef<str>], widths: &[usize]) {
     println!();
 }
 
-fn print_stats(db: &DbInstance) {
+fn print_stats(db: &FlowstoneDb) {
     let notes = database::note_count(db);
     let links = database::link_count(db);
     let dangling = database::dangling_count(db);
@@ -168,7 +167,7 @@ fn print_stats(db: &DbInstance) {
     println!("Dangling: {}", dangling);
 }
 
-fn reload(db: &DbInstance, notes_dir: &Path) {
+fn reload(db: &FlowstoneDb, notes_dir: &Path) {
     println!("Reloading...");
     let notes = scanner::scan(notes_dir);
     let mut all_links = Vec::new();

@@ -12,13 +12,13 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use cozo::DbInstance;
 use futures::Stream;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
+use crate::database::FlowstoneDb;
 use crate::watcher;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
@@ -27,7 +27,7 @@ const STYLE_CSS: &str = include_str!("../static/style.css");
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: Arc<DbInstance>,
+    pub db: Arc<FlowstoneDb>,
     pub notes_dir: PathBuf,
     pub reload_tx: broadcast::Sender<()>,
 }
@@ -54,7 +54,7 @@ struct GraphResponse {
 }
 
 pub async fn run(
-    db: Arc<DbInstance>,
+    db: Arc<FlowstoneDb>,
     notes_dir: PathBuf,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -116,7 +116,7 @@ async fn graph_json(State(state): State<AppState>) -> Response {
     Json(result).into_response()
 }
 
-fn build_graph(db: &DbInstance) -> GraphResponse {
+fn build_graph(db: &FlowstoneDb) -> GraphResponse {
     let mut nodes_map: HashMap<String, GraphNode> = HashMap::new();
     let mut links: Vec<GraphLink> = Vec::new();
 

@@ -1,8 +1,6 @@
 use std::path::Path;
 
-use cozo::DbInstance;
-
-use crate::database;
+use crate::database::{self, FlowstoneDb};
 use crate::parser;
 use crate::scanner;
 
@@ -11,7 +9,7 @@ pub struct LoadStats {
     pub links: usize,
 }
 
-pub fn load(db: &DbInstance, notes_dir: &Path) -> LoadStats {
+pub fn load(db: &FlowstoneDb, notes_dir: &Path) -> LoadStats {
     let notes = scanner::scan(notes_dir);
     let mut all_links = Vec::new();
     for note in &notes {

@@ -1,16 +1,18 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use cozo::{DataValue, DbInstance, Num, ScriptMutability};
+use cozo::{new_cozo_redb, DataValue, Db, Num, RedbStorage, ScriptMutability};
 
 use crate::parser::Link;
 use crate::scanner::Note;
 
-pub fn open(db_path: &Path) -> DbInstance {
-    DbInstance::new("redb", db_path, "").expect("Failed to open database")
+pub type FlowstoneDb = Db<RedbStorage>;
+
+pub fn open(db_path: &Path) -> FlowstoneDb {
+    new_cozo_redb(db_path).expect("Failed to open database")
 }
 
-pub fn create_schema(db: &DbInstance) {
+pub fn create_schema(db: &FlowstoneDb) {
     // Drop existing relations (ignore errors if they don't exist yet)
     let _ = db.run_default("::remove notes");
     let _ = db.run_default("::remove links");
@@ -22,7 +24,7 @@ pub fn create_schema(db: &DbInstance) {
         .expect("Failed to create links relation");
 }
 
-pub fn load_notes(db: &DbInstance, notes: &[Note]) {
+pub fn load_notes(db: &FlowstoneDb, notes: &[Note]) {
     if notes.is_empty() {
         return;
     }
@@ -59,7 +61,7 @@ pub fn load_notes(db: &DbInstance, notes: &[Note]) {
     }
 }
 
-pub fn load_links(db: &DbInstance, links: &[Link]) {
+pub fn load_links(db: &FlowstoneDb, links: &[Link]) {
     if links.is_empty() {
         return;
     }
@@ -86,7 +88,7 @@ pub fn load_links(db: &DbInstance, links: &[Link]) {
     }
 }
 
-pub fn note_count(db: &DbInstance) -> usize {
+pub fn note_count(db: &FlowstoneDb) -> usize {
     db.run_default("?[count(path)] := *notes{path}")
         .ok()
         .and_then(|r| r.rows.first().cloned())
@@ -95,7 +97,7 @@ pub fn note_count(db: &DbInstance) -> usize {
         .unwrap_or(0)
 }
 
-pub fn link_count(db: &DbInstance) -> usize {
+pub fn link_count(db: &FlowstoneDb) -> usize {
     db.run_default("?[count(source)] := *links[source, _]")
         .ok()
         .and_then(|r| r.rows.first().cloned())
@@ -104,7 +106,7 @@ pub fn link_count(db: &DbInstance) -> usize {
         .unwrap_or(0)
 }
 
-pub fn dangling_count(db: &DbInstance) -> usize {
+pub fn dangling_count(db: &FlowstoneDb) -> usize {
     db.run_default("?[count(target)] := *links[_, target], not *notes{path: target}")
         .ok()
         .and_then(|r| r.rows.first().cloned())
