@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pin the sibling cozo fork that Flowstone path-depends on. Matt's cozo
+  # is developed on lawless-m/cozo; main should carry the storage-redb
+  # feature Flowstone needs.
+  COZO_REPO: lawless-m/cozo
+  COZO_REF: main
+
+jobs:
+  build:
+    name: Build / test / lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Flowstone
+        uses: actions/checkout@v4
+        with:
+          path: flowstone
+
+      - name: Checkout cozo (sibling path-dep)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.COZO_REPO }}
+          ref: ${{ env.COZO_REF }}
+          path: cozordb/cozo
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: flowstone
+
+      - name: Format check
+        working-directory: flowstone
+        run: cargo fmt -- --check
+
+      - name: Build (debug)
+        working-directory: flowstone
+        run: cargo build --verbose
+
+      - name: Tests
+        working-directory: flowstone
+        run: cargo test --verbose
+
+      - name: Clippy (Flowstone only)
+        working-directory: flowstone
+        run: cargo clippy -p flowstone -- -D warnings
