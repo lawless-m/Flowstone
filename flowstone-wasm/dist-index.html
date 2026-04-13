@@ -143,9 +143,16 @@
   btnUrl.addEventListener('click', async () => {
     const url = document.getElementById('url').value.trim();
     if (!url) return;
+    // Bust any stale cache copy: Pages sends cache-control: max-age=600
+    // so the browser would otherwise hand back a 10-minute-old zip
+    // right after a docs push. A timestamp query (only when the URL
+    // has no existing query params — we leave signed URLs alone) plus
+    // `cache: 'no-cache'` together force browser revalidation and a
+    // fresh hit through any CDN in front of the host.
+    const bustUrl = url.includes('?') ? url : `${url}?t=${Date.now()}`;
     setStatus(`Fetching ${url}…`);
     try {
-      const res = await fetch(url);
+      const res = await fetch(bustUrl, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const buf = await res.arrayBuffer();
       await loadFromBytes(new Uint8Array(buf), 'URL');
