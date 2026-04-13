@@ -3,6 +3,14 @@ name = "flowstone-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["fts"]
+# Gates the `::fts create notes:ft` schema call in db.rs. Disable in
+# builds whose cozo dep also has no `fts` feature — e.g. the browser
+# wasm build, where tantivy's background segment-updater thread cannot
+# spawn and would panic the whole pipeline at index creation time.
+fts = ["cozo/fts"]
+
 [dependencies]
-cozo = { path = "../../cozordb/cozo/cozo-core", features = ["fts"], default-features = false }
+cozo = { path = "../../cozordb/cozo/cozo-core", default-features = false }
 regex = "1"

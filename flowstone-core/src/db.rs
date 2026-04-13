@@ -11,7 +11,8 @@ where
 {
     // Drop the FTS index before removing the base relation — cozo's
     // destroy_relation refuses to drop a relation that still has indices
-    // attached. All three drops are best-effort: on first run none exist yet.
+    // attached. All drops are best-effort: on first run none exist yet.
+    #[cfg(feature = "fts")]
     let _ = db.run_default("::fts drop notes:ft");
     let _ = db.run_default("::remove notes");
     let _ = db.run_default("::remove links");
@@ -24,6 +25,11 @@ where
     db.run_default(":create links { source: String, target: String }")
         .expect("Failed to create links relation");
 
+    // FTS index creation is gated: in the browser wasm build tantivy's
+    // background segment-updater thread cannot spawn, which panics the
+    // pipeline. Disable the `fts` feature there and search falls back
+    // to plain Datalog queries.
+    #[cfg(feature = "fts")]
     db.run_default("::fts create notes:ft { fields: [title, body] }")
         .expect("Failed to create notes FTS index");
 }
