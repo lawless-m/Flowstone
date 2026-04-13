@@ -1,12 +1,8 @@
-use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use std::path::Path;
+use std::time::UNIX_EPOCH;
 
-pub struct Note {
-    pub path: String,
-    pub title: String,
-    pub body: String,
-    pub abs_path: PathBuf,
-}
+use flowstone_core::Note;
+use walkdir::WalkDir;
 
 pub fn scan(root: &Path) -> Vec<Note> {
     let mut notes = Vec::new();
@@ -42,11 +38,20 @@ pub fn scan(root: &Path) -> Vec<Note> {
 
         let body = std::fs::read_to_string(file_path).unwrap_or_default();
 
+        let meta = std::fs::metadata(file_path).ok();
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified = meta
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+
         notes.push(Note {
             path,
             title,
             body,
-            abs_path: file_path.to_path_buf(),
+            size,
+            modified,
         });
     }
 

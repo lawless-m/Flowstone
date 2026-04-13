@@ -3,7 +3,11 @@ name = "flowstone"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["flowstone-core"]
+
 [dependencies]
+flowstone-core = { path = "flowstone-core" }
 cozo = { path = "../cozordb/cozo/cozo-core", features = ["storage-redb", "graph-algo", "fts"], default-features = false }
 walkdir = "2"
 regex = "1"

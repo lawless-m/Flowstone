@@ -3,8 +3,7 @@ use rustyline::DefaultEditor;
 use std::path::Path;
 
 use crate::database::{self, FlowstoneDb};
-use crate::parser;
-use crate::scanner;
+use crate::pipeline;
 
 pub fn run(db: &FlowstoneDb, notes_dir: &Path) {
     let history_path = history_path();
@@ -169,21 +168,8 @@ fn print_stats(db: &FlowstoneDb) {
 
 fn reload(db: &FlowstoneDb, notes_dir: &Path) {
     println!("Reloading...");
-    let notes = scanner::scan(notes_dir);
-    let mut all_links = Vec::new();
-    for note in &notes {
-        all_links.extend(parser::parse_links(&note.path, &note.abs_path));
-    }
-
-    database::create_schema(db);
-    database::load_notes(db, &notes);
-    database::load_links(db, &all_links);
-
-    println!(
-        "Loaded {} notes, {} links.",
-        database::note_count(db),
-        database::link_count(db),
-    );
+    let stats = pipeline::load(db, notes_dir);
+    println!("Loaded {} notes, {} links.", stats.notes, stats.links);
 }
 
 fn print_help() {

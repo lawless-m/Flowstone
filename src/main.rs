@@ -1,5 +1,4 @@
 mod database;
-mod parser;
 mod pipeline;
 mod repl;
 mod scanner;

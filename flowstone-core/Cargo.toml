@@ -1,0 +1,8 @@
+[package]
+name = "flowstone-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cozo = { path = "../../cozordb/cozo/cozo-core", features = ["fts"], default-features = false }
+regex = "1"
