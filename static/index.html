@@ -6,6 +6,7 @@
 <title>Flowstone — knowledge graph</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 </head>
 <body>
 <header>
@@ -26,6 +27,8 @@
     <button id="close-details" aria-label="Close">&times;</button>
     <h2 id="detail-title"></h2>
     <div id="detail-meta"></div>
+    <h3>Content</h3>
+    <div id="detail-body" class="markdown-body"></div>
     <h3>Backlinks</h3>
     <ul id="detail-backlinks"></ul>
     <h3>Forward links</h3>

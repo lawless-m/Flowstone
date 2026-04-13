@@ -5,6 +5,7 @@
   let selected = null;
   let activeTag = null;
   let missingTagSeq = 0;
+  let bodySeq = 0;
 
   async function loadGraph() {
     const res = await fetch('/api/graph');
@@ -102,6 +103,76 @@
   function clearDimming() {
     svg.selectAll('.node circle').attr('opacity', 1);
     svg.selectAll('.node text').attr('opacity', 1);
+  }
+
+  function linkifyWikiLinks(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let n;
+    while ((n = walker.nextNode())) nodes.push(n);
+
+    const known = new Set(graph.nodes.map(x => x.id));
+
+    for (const textNode of nodes) {
+      let p = textNode.parentElement;
+      let inCode = false;
+      while (p && p !== root) {
+        if (p.tagName === 'CODE' || p.tagName === 'PRE') { inCode = true; break; }
+        p = p.parentElement;
+      }
+      if (inCode) continue;
+
+      const text = textNode.nodeValue;
+      const re = /\[\[([^\]]+)\]\]/g;
+      if (!re.test(text)) continue;
+      re.lastIndex = 0;
+
+      const frag = document.createDocumentFragment();
+      let lastIdx = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > lastIdx) {
+          frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
+        }
+        const target = m[1].trim();
+        const a = document.createElement('a');
+        a.href = '#';
+        a.dataset.noteLink = target;
+        a.textContent = target;
+        if (!known.has(target)) a.classList.add('unresolved');
+        frag.appendChild(a);
+        lastIdx = re.lastIndex;
+      }
+      if (lastIdx < text.length) {
+        frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+      }
+      textNode.parentNode.replaceChild(frag, textNode);
+    }
+  }
+
+  async function loadBody(notePath) {
+    const mySeq = ++bodySeq;
+    const el = document.getElementById('detail-body');
+    el.innerHTML = '<em class="empty">Loading…</em>';
+    try {
+      const res = await fetch('/api/note?path=' + encodeURIComponent(notePath));
+      if (mySeq !== bodySeq) return;
+      const data = await res.json();
+      if (!data.ok) {
+        el.innerHTML = '<em class="empty">(not found)</em>';
+        return;
+      }
+      const body = data.body || '';
+      if (typeof marked !== 'undefined') {
+        el.innerHTML = marked.parse(body);
+        linkifyWikiLinks(el);
+      } else {
+        el.textContent = body;
+      }
+    } catch (e) {
+      console.error('[note]', e);
+      el.innerHTML = '<em class="empty">(failed to load)</em>';
+    }
   }
 
   async function loadMissingTags(notePath) {
@@ -294,6 +365,7 @@
     };
     renderList('detail-backlinks', backs);
     renderList('detail-forward', fwds);
+    loadBody(node.id);
     loadMissingTags(node.id);
 
     const neighbors = new Set([node.id, ...backs, ...fwds]);
@@ -335,6 +407,15 @@
   });
 
   document.getElementById('close-details').addEventListener('click', () => selectNode(null));
+
+  document.getElementById('detail-body').addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-note-link]');
+    if (!a) return;
+    e.preventDefault();
+    const target = a.dataset.noteLink;
+    const node = graph.nodes.find(x => x.id === target);
+    if (node) selectNode(node);
+  });
 
   const chip = document.getElementById('reload-chip');
   const es = new EventSource('/api/events');

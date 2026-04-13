@@ -99,6 +99,19 @@ struct MissingTagsResponse {
     hits: Vec<MissingTagHit>,
 }
 
+#[derive(serde::Deserialize)]
+struct NoteParams {
+    path: String,
+}
+
+#[derive(Serialize)]
+struct NoteResponse {
+    ok: bool,
+    path: String,
+    title: String,
+    body: String,
+}
+
 pub async fn run(
     db: Arc<FlowstoneDb>,
     notes_dir: PathBuf,
@@ -128,6 +141,7 @@ pub async fn run(
         .route("/api/search", get(search_json))
         .route("/api/tags", get(tags_json))
         .route("/api/missing-tags", get(missing_tags_json))
+        .route("/api/note", get(note_json))
         .route("/api/events", get(events))
         .with_state(state);
 
@@ -500,6 +514,71 @@ fn run_search(db: &FlowstoneDb, q: &str) -> SearchResponse {
         Err(e) => {
             eprintln!("[search] query failed: {}", e);
             SearchResponse { hits: Vec::new() }
+        }
+    }
+}
+
+async fn note_json(State(state): State<AppState>, Query(params): Query<NoteParams>) -> Response {
+    let path = params.path.trim().to_string();
+    if path.is_empty() {
+        return Json(NoteResponse {
+            ok: false,
+            path,
+            title: String::new(),
+            body: String::new(),
+        })
+        .into_response();
+    }
+    let db = state.db.clone();
+    let requested = path.clone();
+    let fetched = tokio::task::spawn_blocking(move || fetch_note(db.as_ref(), path))
+        .await
+        .ok()
+        .flatten();
+    match fetched {
+        Some(r) => Json(r).into_response(),
+        None => Json(NoteResponse {
+            ok: false,
+            path: requested,
+            title: String::new(),
+            body: String::new(),
+        })
+        .into_response(),
+    }
+}
+
+fn fetch_note(db: &FlowstoneDb, path: String) -> Option<NoteResponse> {
+    use std::collections::BTreeMap;
+
+    use cozo::{DataValue, ScriptMutability};
+
+    let mut params: BTreeMap<String, DataValue> = BTreeMap::new();
+    params.insert("p".to_string(), DataValue::Str(path.as_str().into()));
+
+    let script = "?[title, body] := *notes{path, title, body}, path = $p";
+    match db.run_script(script, params, ScriptMutability::Immutable) {
+        Ok(r) => {
+            let row = r.rows.first()?;
+            let title = row
+                .first()
+                .and_then(|v| v.get_str())
+                .unwrap_or("")
+                .to_string();
+            let body = row
+                .get(1)
+                .and_then(|v| v.get_str())
+                .unwrap_or("")
+                .to_string();
+            Some(NoteResponse {
+                ok: true,
+                path,
+                title,
+                body,
+            })
+        }
+        Err(e) => {
+            eprintln!("[note] query failed: {}", e);
+            None
         }
     }
 }
