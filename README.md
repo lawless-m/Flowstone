@@ -21,8 +21,10 @@ accumulates and hardens over time.
 - Offers two ways to poke at it:
   - a **REPL** for raw Datalog queries
   - a **web server** with a browser UI, graph visualisation, tag
-    sidebar, full-text search (tantivy, via Cozo's FTS), and live
-    file-watching so edits show up without restarting.
+    sidebar, full-text search (tantivy, via Cozo's FTS), live
+    file-watching so edits show up without restarting, and a detail
+    panel that renders each note's Markdown body with clickable
+    wiki-links for in-app navigation.
 
 The Markdown files are always the source of truth. Flowstone never writes
 back to them.
@@ -92,12 +94,12 @@ the browser is nudged over an event stream so the view stays current.
 ## Repo layout
 
 ```
+flowstone-core/ Library crate: parser, schema, bulk loaders, counts
 src/
   main.rs       CLI entry point — dispatches to REPL or server
   scanner.rs    Walks the notes directory
-  parser.rs     Extracts wiki-links and tags from Markdown
-  pipeline.rs   Loads parsed notes into Cozo
-  database.rs   Cozo open/init + schema
+  pipeline.rs   Drives flowstone-core to (re)load the database
+  database.rs   Cozo open/init, thin wrappers over flowstone-core
   repl.rs       Datalog REPL (rustyline)
   server.rs     Axum web server + JSON API
   watcher.rs    notify-based filesystem watcher
@@ -105,6 +107,11 @@ static/         Browser UI: index.html, style.css, graph.js
 flowstone-spec/ Design notes and schema reference
 prompts/        Prompts for optional LLM-assisted tagging
 ```
+
+The workspace is a Cargo workspace: `flowstone-core` is a library that
+any other tool can depend on to ingest a notes directory into a Cozo
+database, and the `flowstone` binary is the CLI and web server built
+on top of it.
 
 ## Status
 
