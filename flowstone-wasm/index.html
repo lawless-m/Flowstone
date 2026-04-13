@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flowstone WASM — feasibility demo</title>
+<style>
+  body { font-family: ui-monospace, 'SF Mono', Menlo, monospace; max-width: 900px; margin: 30px auto; padding: 0 20px; background: #1b1b1b; color: #e8e8e8; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  p.sub { color: #888; margin-top: 0; }
+  fieldset { border: 1px solid #333; padding: 12px 16px; margin: 16px 0; }
+  legend { padding: 0 6px; color: #9ac; }
+  label { display: block; margin-bottom: 6px; font-size: 12px; color: #aaa; }
+  input[type="text"], textarea { width: 100%; background: #111; color: #e8e8e8; border: 1px solid #333; padding: 6px 8px; font-family: inherit; font-size: 13px; box-sizing: border-box; }
+  textarea { min-height: 90px; resize: vertical; }
+  button { background: #2a4; color: #000; border: none; padding: 6px 12px; font-family: inherit; font-size: 13px; cursor: pointer; margin-top: 8px; }
+  button:disabled { background: #444; color: #888; cursor: not-allowed; }
+  button:hover:not(:disabled) { background: #3c5; }
+  #status { margin: 12px 0; padding: 8px 12px; background: #222; border-left: 3px solid #555; font-size: 13px; min-height: 1.2em; }
+  #status.error { border-left-color: #c44; color: #faa; }
+  #status.ok { border-left-color: #2a4; }
+  #stats { color: #9ac; font-size: 12px; margin-top: 4px; }
+  pre#result { background: #111; border: 1px solid #333; padding: 10px; font-size: 12px; max-height: 400px; overflow: auto; white-space: pre-wrap; }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row > *:first-child { flex: 1; }
+  .note { font-size: 11px; color: #777; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>Flowstone WASM feasibility demo</h1>
+<p class="sub">A zip of Markdown notes goes in; a Datalog-queryable CozoDB comes out. No server-side processing — just this static page and a wasm blob. (FTS is disabled in the browser build: tantivy's segment-updater thread cannot spawn in a sandboxed wasm page, so search uses plain <code>starts_with</code> / substring Datalog instead.)</p>
+
+<fieldset>
+  <legend>1. Load a zip</legend>
+  <label for="url">From URL (must allow CORS):</label>
+  <div class="row">
+    <input type="text" id="url" value="https://raw.githubusercontent.com/lawless-m/Flowstone-Docs/main/Flowstone-Docs.zip" placeholder="https://.../Flowstone-Docs.zip">
+    <button id="btn-url">Fetch</button>
+  </div>
+  <p class="note">The default URL points at the CI-built zip on <code>raw.githubusercontent.com</code>, which sends <code>Access-Control-Allow-Origin: *</code>. Paste any URL from a host that does the same, or use the file picker below if CORS blocks you.</p>
+
+  <label for="file" style="margin-top: 14px;">Or from a local file:</label>
+  <div class="row">
+    <input type="file" id="file" accept=".zip,application/zip">
+    <button id="btn-file">Load</button>
+  </div>
+</fieldset>
+
+<div id="status">Waiting for a zip…</div>
+<div id="stats"></div>
+
+<fieldset>
+  <legend>2. Run a Datalog query</legend>
+  <label for="script">Script:</label>
+  <textarea id="script" spellcheck="false">?[path, title] := *notes{path, title}
+:limit 10</textarea>
+  <label for="params" style="margin-top: 10px;">Params (JSON object, or empty):</label>
+  <input type="text" id="params" value="">
+  <div style="margin-top: 8px;">
+    <button id="btn-run" disabled>Run</button>
+    <button id="btn-example-top" disabled>Example: most-linked notes</button>
+    <button id="btn-example-dangling" disabled>Example: dangling links</button>
+  </div>
+</fieldset>
+
+<pre id="result"></pre>
+
+<script type="module">
+  import init, { Flowstone } from './pkg/flowstone_wasm.js';
+
+  const statusEl = document.getElementById('status');
+  const statsEl  = document.getElementById('stats');
+  const resultEl = document.getElementById('result');
+  const scriptEl = document.getElementById('script');
+  const paramsEl = document.getElementById('params');
+  const btnUrl   = document.getElementById('btn-url');
+  const btnFile  = document.getElementById('btn-file');
+  const btnRun   = document.getElementById('btn-run');
+  const btnTop   = document.getElementById('btn-example-top');
+  const btnDang  = document.getElementById('btn-example-dangling');
+
+  let fs = null;
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = kind || '';
+  }
+
+  async function loadFromBytes(bytes, origin) {
+    try {
+      setStatus(`Building database from ${origin} (${(bytes.byteLength/1024).toFixed(1)} KB)…`);
+      const t0 = performance.now();
+      if (fs) { fs.free(); fs = null; }
+      fs = Flowstone.from_zip(bytes);
+      const ms = (performance.now() - t0).toFixed(0);
+      const notes = fs.note_count();
+      const links = fs.link_count();
+      const dangling = fs.dangling_count();
+      setStatus(`Loaded ${notes} notes, ${links} links (${dangling} dangling) in ${ms} ms.`, 'ok');
+      statsEl.textContent = `live counts via cozo: ${fs.live_note_count()} notes / ${fs.live_link_count()} links`;
+      btnRun.disabled = false;
+      btnTop.disabled = false;
+      btnDang.disabled = false;
+    } catch (e) {
+      console.error(e);
+      setStatus(`Failed: ${e.message || e}`, 'error');
+    }
+  }
+
+  btnUrl.addEventListener('click', async () => {
+    const url = document.getElementById('url').value.trim();
+    if (!url) return;
+    setStatus(`Fetching ${url}…`);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      await loadFromBytes(new Uint8Array(buf), 'URL');
+    } catch (e) {
+      console.error(e);
+      setStatus(`Fetch failed: ${e.message || e}. If this is a CORS error, use the file picker.`, 'error');
+    }
+  });
+
+  btnFile.addEventListener('click', async () => {
+    const file = document.getElementById('file').files[0];
+    if (!file) { setStatus('Pick a file first.', 'error'); return; }
+    const buf = await file.arrayBuffer();
+    await loadFromBytes(new Uint8Array(buf), 'file');
+  });
+
+  btnRun.addEventListener('click', () => {
+    if (!fs) return;
+    const script = scriptEl.value;
+    const params = paramsEl.value.trim();
+    const out = fs.run(script, params, true);
+    try {
+      resultEl.textContent = JSON.stringify(JSON.parse(out), null, 2);
+    } catch {
+      resultEl.textContent = out;
+    }
+  });
+
+  btnTop.addEventListener('click', () => {
+    scriptEl.value = `?[target, count(source)] := *links[source, target], *notes{path: target}
+:order -count(source)
+:limit 10`;
+    paramsEl.value = '';
+    btnRun.click();
+  });
+
+  btnDang.addEventListener('click', () => {
+    scriptEl.value = `?[target, count(source)] := *links[source, target], not *notes{path: target}
+:order -count(source)
+:limit 20`;
+    paramsEl.value = '';
+    btnRun.click();
+  });
+
+  setStatus('Initialising wasm module…');
+  await init();
+  setStatus('Ready. Load a zip to begin.');
+</script>
+</body>
+</html>

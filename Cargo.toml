@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = ["flowstone-core"]
+members = ["flowstone-core", "flowstone-wasm"]
+# Exclude the wasm crate from `cargo build` at the workspace root: it is
+# only meant to be built via `flowstone-wasm/build.sh` against
+# wasm32-unknown-unknown, and its cozo feature set is mutually exclusive
+# with the native binary's storage-redb feature.
+default-members = [".", "flowstone-core"]
 
 [dependencies]
 flowstone-core = { path = "flowstone-core" }

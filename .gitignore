@@ -2,3 +2,9 @@ target/
 .devlog/
 *.db
 .flowstone.db
+
+# wasm-pack output is a build artefact — rebuilt via flowstone-wasm/build.sh.
+flowstone-wasm/pkg/
+# Locally-cached test corpus for the wasm demo; the prod path is
+# raw.githubusercontent.com/lawless-m/Flowstone-Docs/main/Flowstone-Docs.zip
+flowstone-wasm/Flowstone-Docs-main.zip

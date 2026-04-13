@@ -1,0 +1,27 @@
+[package]
+name = "flowstone-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Flowstone knowledge-graph in the browser: takes a zip of Markdown notes and exposes a CozoDB query API"
+license = "MPL-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+# Disable flowstone-core default features so its `fts` (and thus
+# cozo's `fts` via its feature) is off — the browser cannot spawn the
+# tantivy segment-updater thread. Search still works via plain
+# Datalog; the Axum binary keeps FTS because it enables the feature.
+flowstone-core = { path = "../flowstone-core", default-features = false }
+cozo = { path = "../../cozordb/cozo/cozo-core", default-features = false, features = ["wasm"] }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde_json = "1"
+getrandom = { version = "0.2", features = ["js"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+console_error_panic_hook = { version = "0.1.7", optional = true }
