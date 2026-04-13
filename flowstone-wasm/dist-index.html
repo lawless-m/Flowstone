@@ -4,12 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Flowstone — in-page knowledge graph</title>
-<link rel="stylesheet" href="/static/style.css">
+<!-- All local paths are relative so this page works behind any
+     Apache reverse-proxy prefix (see Reverse Proxy Deployment skill)
+     and copies cleanly into a single flat directory on any static
+     host. CDN scripts stay absolute HTTPS. -->
+<link rel="stylesheet" href="./style.css">
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <style>
-  /* Loader overlay sits over the full graph UI until a zip has been
-     fetched, parsed, and handed to the wasm Flowstone instance. */
   #loader-overlay {
     position: fixed;
     inset: 0;
@@ -47,7 +49,6 @@
 </head>
 <body>
 
-<!-- Loader overlay -->
 <div id="loader-overlay">
   <div id="loader-panel">
     <h2>Flowstone — in-page knowledge graph</h2>
@@ -74,9 +75,6 @@
   </div>
 </div>
 
-<!-- The graph UI below is a duplicate of static/index.html's body — the
-     unchanged static/graph.js selects into these elements once the shim
-     has replaced /api/* fetches with calls to the in-page Flowstone. -->
 <header>
   <h1>Flowstone</h1>
   <input type="search" id="search" placeholder="Search notes…" autocomplete="off" spellcheck="false">
@@ -107,8 +105,8 @@
 </main>
 
 <script type="module">
-  import init, { Flowstone } from '/flowstone-wasm/pkg/flowstone_wasm.js';
-  import { installShim } from '/flowstone-wasm/shim.js';
+  import init, { Flowstone } from './flowstone_wasm.js';
+  import { installShim } from './shim.js';
 
   const statusEl = document.getElementById('loader-status');
   const overlay  = document.getElementById('loader-overlay');
@@ -130,17 +128,11 @@
       const ms = (performance.now() - t0).toFixed(0);
       setStatus(`Loaded ${fs.note_count()} notes, ${fs.link_count()} links in ${ms} ms. Rendering…`, 'ok');
 
-      // Install the fetch/EventSource shim before loading graph.js, so
-      // its loadGraph()/loadTags()/EventSource call at IIFE time all go
-      // to the in-page Flowstone rather than a 404 on /api/*.
       installShim(fs);
-
-      // Fade out the loader and drop graph.js in — it runs as an IIFE
-      // against the UI structure already sitting in the DOM below.
       overlay.style.display = 'none';
 
       const s = document.createElement('script');
-      s.src = '/static/graph.js';
+      s.src = './graph.js';
       document.body.appendChild(s);
     } catch (e) {
       console.error(e);

@@ -32,3 +32,22 @@ CC_wasm32_unknown_unknown="$CC_WASM" \
 AR_wasm32_unknown_unknown="$AR_WASM" \
 CARGO_PROFILE_RELEASE_LTO=fat \
     wasm-pack build --target web --release
+
+# Assemble dist/ — a single flat directory containing everything you
+# need to host the wasm Flowstone demo behind any static web server
+# (Apache reverse proxy, GitHub Pages, S3, nginx, whatever). All page
+# paths inside dist-index.html are relative, so the drop-in works at
+# any mount point without further edits.
+DIST="dist"
+rm -rf "$DIST"
+mkdir -p "$DIST"
+cp pkg/flowstone_wasm.js          "$DIST/"
+cp pkg/flowstone_wasm_bg.wasm     "$DIST/"
+cp shim.js                         "$DIST/"
+cp ../static/graph.js              "$DIST/"
+cp ../static/style.css             "$DIST/"
+cp dist-index.html                 "$DIST/index.html"
+
+echo
+echo "dist/ assembled:"
+ls -lh "$DIST"
