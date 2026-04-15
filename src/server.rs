@@ -82,6 +82,26 @@ struct TagsResponse {
     tags: Vec<TagInfo>,
 }
 
+#[derive(Serialize)]
+struct TagGraphNode {
+    id: String,
+    count: usize,
+    resolved: bool,
+}
+
+#[derive(Serialize)]
+struct TagGraphLink {
+    source: String,
+    target: String,
+    weight: usize,
+}
+
+#[derive(Serialize)]
+struct TagGraphResponse {
+    nodes: Vec<TagGraphNode>,
+    links: Vec<TagGraphLink>,
+}
+
 #[derive(serde::Deserialize)]
 struct MissingTagsParams {
     note: Option<String>,
@@ -140,6 +160,7 @@ pub async fn run(
         .route("/api/graph", get(graph_json))
         .route("/api/search", get(search_json))
         .route("/api/tags", get(tags_json))
+        .route("/api/tag-graph", get(tag_graph_json))
         .route("/api/missing-tags", get(missing_tags_json))
         .route("/api/note", get(note_json))
         .route("/api/events", get(events))
@@ -309,6 +330,55 @@ fn build_tags(db: &FlowstoneDb) -> TagsResponse {
     }
 
     TagsResponse { tags }
+}
+
+async fn tag_graph_json(State(state): State<AppState>) -> Response {
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || build_tag_graph(db.as_ref()))
+        .await
+        .unwrap_or_else(|_| TagGraphResponse { nodes: Vec::new(), links: Vec::new() });
+    Json(result).into_response()
+}
+
+fn build_tag_graph(db: &FlowstoneDb) -> TagGraphResponse {
+    let note_paths: HashSet<String> = match db.run_default("?[path] := *notes{path}") {
+        Ok(r) => r.rows.into_iter()
+            .filter_map(|row| row.into_iter().next().and_then(|v| v.get_str().map(String::from)))
+            .collect(),
+        Err(_) => HashSet::new(),
+    };
+
+    let nodes: Vec<TagGraphNode> = match db.run_default(
+        "?[tag, count(note)] := *links[note, tag] :order -count(note)"
+    ) {
+        Ok(r) => r.rows.into_iter().filter_map(|row| {
+            let id    = row.first().and_then(|v| v.get_str()).unwrap_or("").to_string();
+            let count = row.get(1).and_then(|v| v.get_int()).unwrap_or(0) as usize;
+            if id.is_empty() || count < 2 { return None; }
+            let resolved = note_paths.contains(&id);
+            Some(TagGraphNode { id, count, resolved })
+        }).collect(),
+        Err(e) => { eprintln!("[tag-graph] node query failed: {}", e); Vec::new() }
+    };
+
+    let node_set: HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+
+    let links: Vec<TagGraphLink> = match db.run_default(
+        "?[tag1, tag2, count(note)] := *links[note, tag1], *links[note, tag2], tag1 < tag2 :order -count(note)"
+    ) {
+        Ok(r) => r.rows.into_iter().filter_map(|row| {
+            let source = row.first().and_then(|v| v.get_str()).unwrap_or("").to_string();
+            let target = row.get(1).and_then(|v| v.get_str()).unwrap_or("").to_string();
+            let weight = row.get(2).and_then(|v| v.get_int()).unwrap_or(0) as usize;
+            if weight < 2 || !node_set.contains(source.as_str()) || !node_set.contains(target.as_str()) {
+                return None;
+            }
+            Some(TagGraphLink { source, target, weight })
+        }).collect(),
+        Err(e) => { eprintln!("[tag-graph] edge query failed: {}", e); Vec::new() }
+    };
+
+    TagGraphResponse { nodes, links }
 }
 
 async fn missing_tags_json(

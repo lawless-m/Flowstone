@@ -71,6 +71,36 @@ header input[type="search"]:focus {
   background: #ff5a7a;
 }
 
+#view-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 20px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--bg-deep);
+  flex-shrink: 0;
+}
+
+.view-tab {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms;
+}
+
+.view-tab:hover { color: var(--text); }
+
+.view-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
 main {
   flex: 1;
   position: relative;
@@ -79,6 +109,38 @@ main {
 }
 
 #graph {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+
+#cloud {
+  flex: 1;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.cloud-tag {
+  position: absolute;
+  white-space: nowrap;
+  color: var(--tag-color, var(--text));
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1;
+  transition: color 120ms, opacity 120ms;
+  user-select: none;
+}
+
+.cloud-tag:hover { color: var(--accent); }
+.cloud-tag.unresolved { color: var(--text-dim); font-style: italic; font-weight: 500; }
+.cloud-tag.active { color: var(--accent); }
+.cloud-tag.dim { opacity: 0.2; }
+
+#tag-net {
   flex: 1;
   width: 100%;
   height: 100%;
@@ -354,6 +416,32 @@ aside ul li.empty {
   font-weight: 600;
   color: var(--accent);
   font-size: 12px;
+}
+
+#search-dropdown {
+  position: fixed;
+  background: var(--bg-alt);
+  border: 1px solid var(--bg-deep);
+  border-top: none;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.search-result-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-result-item:hover {
+  background: var(--bg-deep);
+  color: var(--accent);
 }
 
 #detail-missing-tags .missing-tag-snippet {

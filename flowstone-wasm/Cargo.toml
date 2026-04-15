@@ -10,12 +10,14 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["console_error_panic_hook"]
+# Enable FTS + rayon thread-pool bridged to web workers.
+# Requires nightly + atomics build; see build.sh.
+# We pull tantivy in directly so that from_zip can build the index with
+# SingleSegmentIndexWriter (no background threads) instead of cozo's
+# IndexWriter (which always spawns std::thread workers).
+fts = ["flowstone-core/fts", "wasm-bindgen-rayon", "dep:tantivy"]
 
 [dependencies]
-# Disable flowstone-core default features so its `fts` (and thus
-# cozo's `fts` via its feature) is off — the browser cannot spawn the
-# tantivy segment-updater thread. Search still works via plain
-# Datalog; the Axum binary keeps FTS because it enables the feature.
 flowstone-core = { path = "../flowstone-core", default-features = false }
 cozo = { path = "../../cozordb/cozo/cozo-core", default-features = false, features = ["wasm"] }
 wasm-bindgen = "0.2"
@@ -24,4 +26,6 @@ serde_json = "1"
 getrandom = { version = "0.2", features = ["js"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-console_error_panic_hook = { version = "0.1.7", optional = true }
+console_error_panic_hook  = { version = "0.1.7", optional = true }
+wasm-bindgen-rayon        = { version = "1",     optional = true }
+tantivy                   = { version = "0.22",  optional = true, default-features = false, features = ["stopwords"] }

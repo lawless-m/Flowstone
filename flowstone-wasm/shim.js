@@ -4,8 +4,8 @@
 //
 // The native server's endpoint shapes (see src/server.rs) are reproduced
 // here in JavaScript, running Datalog queries against Flowstone.run().
-// FTS-backed search falls back to a plain substring sweep because the
-// wasm build has `fts` disabled (see flowstone-core's `fts` feature).
+// Search uses tantivy FTS (fs.fts_search) in the fts build, and falls
+// back to a ranked substring sweep on non-fts hosts.
 
 export function installShim(fs) {
   const originalFetch = window.fetch.bind(window);
@@ -20,6 +20,7 @@ export function installShim(fs) {
       switch (u.pathname) {
         case '/api/graph':        return jsonResponse(buildGraph(fs));
         case '/api/tags':         return jsonResponse(buildTags(fs));
+        case '/api/tag-graph':    return jsonResponse(buildTagGraph(fs));
         case '/api/note':         return jsonResponse(buildNote(fs, u.searchParams.get('path')));
         case '/api/missing-tags': return jsonResponse(buildMissingTags(fs, u.searchParams.get('note')));
         case '/api/search':       return jsonResponse(buildSearch(fs, u.searchParams.get('q')));
@@ -196,27 +197,92 @@ function snippetAround(text, start, end) {
   return prefix + body + suffix;
 }
 
+// ---- /api/tag-graph ----
+//
+// Co-occurrence graph: nodes are tag targets, edges connect tags that
+// appear together in the same note. Only tags used in >= 2 notes are
+// included as nodes; only pairs that co-occur in >= 2 notes get an edge.
+
+function buildTagGraph(fs) {
+  const noteSet = new Set((run(fs, '?[path] := *notes{path}').rows || []).map(r => r[0]));
+
+  const tagCountRes = run(fs, '?[tag, count(note)] := *links[note, tag] :order -count(note)');
+  const nodes = (tagCountRes.rows || [])
+    .filter(([, count]) => count >= 2)
+    .map(([id, count]) => ({ id, count, resolved: noteSet.has(id) }));
+  const nodeSet = new Set(nodes.map(n => n.id));
+
+  const coRes = run(fs, `
+    ?[tag1, tag2, count(note)] :=
+      *links[note, tag1],
+      *links[note, tag2],
+      tag1 < tag2
+    :order -count(note)
+  `);
+  const links = (coRes.rows || [])
+    .filter(([t1, t2, w]) => w >= 2 && nodeSet.has(t1) && nodeSet.has(t2))
+    .map(([source, target, weight]) => ({ source, target, weight }));
+
+  return { nodes, links };
+}
+
 // ---- /api/search ----
 //
 // FTS is disabled in the browser wasm build (tantivy needs threads), so
-// we fall back to a plain case-insensitive substring sweep over titles
-// and bodies. Score is always 0 — purely ordering-neutral, the UI only
-// uses it for the hit set.
+// we rank results ourselves: split query into terms, require all to match
+// somewhere in title or body, score title matches higher than body matches.
+
+function countOccurrences(str, sub) {
+  let n = 0, pos = 0;
+  while ((pos = str.indexOf(sub, pos)) !== -1) { n++; pos += sub.length; }
+  return n;
+}
 
 function buildSearch(fs, q) {
   if (!q) return { hits: [] };
-  const needle = q.trim().toLowerCase();
-  if (!needle) return { hits: [] };
+
+  // Use tantivy FTS when available (fts build, crossOriginIsolated host).
+  if (typeof fs.fts_search === 'function') {
+    try {
+      const result = JSON.parse(fs.fts_search(q, 20));
+      if (result && Array.isArray(result.hits)) return result;
+    } catch (e) {
+      console.warn('[flowstone-shim] fts_search failed, falling back:', e);
+    }
+  }
+
+  const terms = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return { hits: [] };
+
   const res = run(fs, '?[path, title, body] := *notes{path, title, body}');
   const hits = [];
+
   for (const row of res.rows || []) {
     const [path, title, body] = row;
     if (!path) continue;
-    const t = (title || '').toLowerCase();
-    const b = (body || '').toLowerCase();
-    if (t.includes(needle) || b.includes(needle)) {
-      hits.push({ path, title: title || '', score: 0 });
+    const t = (title || path).toLowerCase();
+    const b = (body  || '').toLowerCase();
+
+    let score = 0;
+    let allMatch = true;
+
+    for (const term of terms) {
+      const ti = t.indexOf(term);
+      const bi = b.indexOf(term);
+      if (ti === -1 && bi === -1) { allMatch = false; break; }
+      if (ti !== -1) {
+        score += ti === 0 ? 60 : 40;
+        score += countOccurrences(t, term) * 4;
+      }
+      if (bi !== -1) {
+        score += 10;
+        score += Math.min(countOccurrences(b, term), 5) * 2;
+      }
     }
+
+    if (allMatch) hits.push({ path, title: title || path, score });
   }
+
+  hits.sort((a, b) => b.score - a.score);
   return { hits };
 }

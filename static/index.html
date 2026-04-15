@@ -15,6 +15,11 @@
   <span id="stats"></span>
   <button id="reload-chip" hidden>Graph updated — click to refresh</button>
 </header>
+<nav id="view-tabs">
+  <button class="view-tab active" data-view="net">Net</button>
+  <button class="view-tab" data-view="cloud">W-Cloud</button>
+  <button class="view-tab" data-view="tagnet">Tags</button>
+</nav>
 <main>
   <aside id="tags">
     <h3>Topics</h3>
@@ -23,18 +28,26 @@
     <ul id="orphan-list"></ul>
   </aside>
   <svg id="graph"></svg>
+  <div id="cloud" hidden></div>
+  <svg id="tag-net" hidden></svg>
   <aside id="details" hidden>
     <button id="close-details" aria-label="Close">&times;</button>
     <h2 id="detail-title"></h2>
     <div id="detail-meta"></div>
-    <h3>Content</h3>
-    <div id="detail-body" class="markdown-body"></div>
-    <h3>Backlinks</h3>
-    <ul id="detail-backlinks"></ul>
-    <h3>Forward links</h3>
-    <ul id="detail-forward"></ul>
-    <h3>Missing tags</h3>
-    <ul id="detail-missing-tags"></ul>
+    <div id="tag-notes-section" hidden>
+      <h3>Tagged notes</h3>
+      <ul id="tag-notes-list"></ul>
+    </div>
+    <div id="note-sections">
+      <h3>Content</h3>
+      <div id="detail-body" class="markdown-body"></div>
+      <h3>Backlinks</h3>
+      <ul id="detail-backlinks"></ul>
+      <h3>Forward links</h3>
+      <ul id="detail-forward"></ul>
+      <h3>Missing tags</h3>
+      <ul id="detail-missing-tags"></ul>
+    </div>
   </aside>
 </main>
 <script src="/static/graph.js"></script>

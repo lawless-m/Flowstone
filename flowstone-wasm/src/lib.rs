@@ -10,11 +10,35 @@ use wasm_bindgen::prelude::*;
 use cozo::{new_cozo_mem, DataValue, Db, MemStorage, ScriptMutability};
 use flowstone_core::{build, dangling_count, link_count, note_count, Note};
 
+// When the `fts` feature is on we build a tantivy full-text index directly —
+// bypassing cozo's ::fts create because tantivy's IndexWriter always spawns
+// background threads via std::thread::spawn which panics in browser wasm.
+// SingleSegmentIndexWriter is thread-free and sufficient for our write-once
+// use case (index is built once at zip load time and only read afterwards).
+#[cfg(feature = "fts")]
+use tantivy::{
+    Index, IndexReader, IndexSettings, ReloadPolicy, SingleSegmentIndexWriter, TantivyDocument,
+    collector::TopDocs,
+    query::QueryParser,
+    schema::{Field, OwnedValue, Schema, STORED, STRING, TEXT},
+    store::Compressor,
+};
+
+#[cfg(feature = "fts")]
+struct FtsHandle {
+    index: Index,
+    reader: IndexReader,
+    text_fields: Vec<Field>,
+    key_field: Field,
+}
+
 #[wasm_bindgen]
 pub struct Flowstone {
     db: Db<MemStorage>,
     notes: usize,
     links: usize,
+    #[cfg(feature = "fts")]
+    fts: Option<FtsHandle>,
 }
 
 #[wasm_bindgen]
@@ -35,10 +59,19 @@ impl Flowstone {
             .map_err(|e| JsError::new(&format!("failed to read zip: {e}")))?;
 
         let stats = build(&db, &notes);
+
+        #[cfg(feature = "fts")]
+        let fts = Some(
+            build_fts_index(&notes)
+                .map_err(|e| JsError::new(&format!("failed to build FTS index: {e}")))?,
+        );
+
         Ok(Flowstone {
             db,
             notes: stats.notes,
             links: stats.links,
+            #[cfg(feature = "fts")]
+            fts,
         })
     }
 
@@ -66,6 +99,43 @@ impl Flowstone {
     /// no params). Returns a JSON string with an `ok` field, shaped
     /// identically to `cozo-lib-wasm` so the same client code can talk
     /// to either.
+    /// Full-text search via tantivy (only available in the `fts` build).
+    /// Returns JSON `{"hits":[{"path":"...","title":"...","score":1.0},…]}`.
+    /// Falls back to an empty hit list when called on a non-FTS build.
+    #[cfg(feature = "fts")]
+    pub fn fts_search(&self, query: &str, k: usize) -> String {
+        let Some(ref fts) = self.fts else {
+            return r#"{"hits":[]}"#.to_string();
+        };
+        let searcher = fts.reader.searcher();
+        let parser = QueryParser::for_index(&fts.index, fts.text_fields.clone());
+        let parsed = match parser.parse_query(query) {
+            Ok(q) => q,
+            Err(e) => return error_json(&format!("bad query: {e}")),
+        };
+        let top = match searcher.search(&parsed, &TopDocs::with_limit(k)) {
+            Ok(t) => t,
+            Err(e) => return error_json(&format!("search error: {e}")),
+        };
+        let mut hits = Vec::with_capacity(top.len());
+        for (score, addr) in top {
+            let doc: TantivyDocument = match searcher.doc(addr) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let path = doc.get_first(fts.key_field)
+                .and_then(|v| if let OwnedValue::Str(s) = v { Some(s.as_str()) } else { None })
+                .unwrap_or("")
+                .to_string();
+            let title = doc.get_first(fts.text_fields[0])
+                .and_then(|v| if let OwnedValue::Str(s) = v { Some(s.as_str()) } else { None })
+                .unwrap_or(&path)
+                .to_string();
+            hits.push(serde_json::json!({"path": path, "title": title, "score": score}));
+        }
+        serde_json::json!({"hits": hits}).to_string()
+    }
+
     pub fn run(&self, script: &str, params: &str, immutable: bool) -> String {
         let params_map = match parse_params(params) {
             Ok(p) => p,
@@ -87,6 +157,54 @@ impl Flowstone {
             Err(e) => error_json(&format!("{e:?}")),
         }
     }
+}
+
+/// Build an in-RAM tantivy FTS index from the loaded notes using
+/// `SingleSegmentIndexWriter`, which has no background threads.
+/// `Compressor::None` is used to avoid LZ4, which is unavailable in wasm.
+#[cfg(feature = "fts")]
+fn build_fts_index(notes: &[Note]) -> Result<FtsHandle, String> {
+    let mut builder = Schema::builder();
+    let key_field   = builder.add_text_field("path",  STRING | STORED);
+    let title_field = builder.add_text_field("title", TEXT   | STORED);
+    let body_field  = builder.add_text_field("body",  TEXT);
+    let schema = builder.build();
+
+    let settings = IndexSettings {
+        docstore_compression: Compressor::None,
+        docstore_compress_dedicated_thread: false,
+        ..Default::default()
+    };
+    let index = Index::builder()
+        .schema(schema)
+        .settings(settings)
+        .create_in_ram()
+        .map_err(|e| format!("create_in_ram: {e}"))?;
+
+    let mut writer = SingleSegmentIndexWriter::new(index, 50 * 1024 * 1024)
+        .map_err(|e| format!("new_writer: {e}"))?;
+
+    for note in notes {
+        let mut doc = TantivyDocument::default();
+        doc.add_text(key_field,   &note.path);
+        doc.add_text(title_field, &note.title);
+        doc.add_text(body_field,  &note.body);
+        writer.add_document(doc).map_err(|e| format!("add_document: {e}"))?;
+    }
+
+    let index = writer.finalize().map_err(|e| format!("finalize: {e}"))?;
+    let reader = index
+        .reader_builder()
+        .reload_policy(ReloadPolicy::Manual)
+        .try_into()
+        .map_err(|e: tantivy::TantivyError| format!("reader: {e}"))?;
+
+    Ok(FtsHandle {
+        index,
+        reader,
+        text_fields: vec![title_field, body_field],
+        key_field,
+    })
 }
 
 fn parse_params(params: &str) -> Result<BTreeMap<String, DataValue>, String> {
@@ -178,6 +296,12 @@ fn web_sys_warn(msg: &str) {
     }
     warn(msg);
 }
+
+// When the fts feature is on, expose wasm-bindgen-rayon's thread-pool
+// initialiser so the JS host can call `await initThreadPool(N)` before
+// loading any zip.  The function is a no-op on builds without fts.
+#[cfg(feature = "fts")]
+pub use wasm_bindgen_rayon::init_thread_pool;
 
 fn set_panic_hook() {
     #[cfg(feature = "console_error_panic_hook")]

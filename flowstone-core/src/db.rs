@@ -25,11 +25,12 @@ where
     db.run_default(":create links { source: String, target: String }")
         .expect("Failed to create links relation");
 
-    // FTS index creation is gated: in the browser wasm build tantivy's
-    // background segment-updater thread cannot spawn, which panics the
-    // pipeline. Disable the `fts` feature there and search falls back
-    // to plain Datalog queries.
-    #[cfg(feature = "fts")]
+    // FTS index creation: skip on wasm32 because tantivy's IndexWriter always
+    // spawns background threads (segment updater + merge pool) via
+    // std::thread::spawn, which panics in browser wasm regardless of whether
+    // wasm-bindgen-rayon's thread pool is set up.  The flowstone-wasm crate
+    // builds its own tantivy index via SingleSegmentIndexWriter instead.
+    #[cfg(all(feature = "fts", not(target_arch = "wasm32")))]
     db.run_default("::fts create notes:ft { fields: [title, body] }")
         .expect("Failed to create notes FTS index");
 }
