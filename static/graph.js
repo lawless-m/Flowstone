@@ -12,6 +12,12 @@
   let tagSimulation = null;
   let tagNetDirty = true;
 
+  // Initialise display state using inline styles so setView's style.display
+  // assignments always win over HTML `hidden` attributes + UA stylesheet.
+  document.getElementById('cloud').style.display    = 'none';
+  document.getElementById('tag-net').style.display  = 'none';
+  document.getElementById('tags').style.display     = 'block';
+
   async function loadTagGraph() {
     try {
       const res = await fetch('/api/tag-graph');
@@ -726,10 +732,10 @@
     document.querySelectorAll('.view-tab').forEach(b => {
       b.classList.toggle('active', b.dataset.view === view);
     });
-    document.getElementById('graph').style.display  = view === 'net'     ? '' : 'none';
-    document.getElementById('cloud').hidden          = view !== 'cloud';
-    document.getElementById('tag-net').hidden        = view !== 'tagnet';
-    document.getElementById('tags').hidden           = view !== 'net';
+    document.getElementById('graph').style.display    = view === 'net'     ? 'block' : 'none';
+    document.getElementById('cloud').style.display   = view === 'cloud'   ? 'block' : 'none';
+    document.getElementById('tag-net').style.display = view === 'tagnet'  ? 'block' : 'none';
+    document.getElementById('tags').style.display    = view === 'net'     ? 'block' : 'none';
     if (view === 'cloud')  renderCloud();
     if (view === 'tagnet') renderTagNet();
   }
