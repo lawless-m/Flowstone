@@ -24,7 +24,14 @@ export function installShim(fs) {
         case '/api/note':
           if (init && init.method === 'POST') {
             const body = init.body ? JSON.parse(init.body) : {};
+            if (typeof body.body === 'string') {
+              return jsonResponse(JSON.parse(fs.upsert_note(body.path || '', body.body)));
+            }
             return jsonResponse(JSON.parse(fs.create_note(body.path || '')));
+          }
+          if (init && init.method === 'DELETE') {
+            const body = init.body ? JSON.parse(init.body) : {};
+            return jsonResponse(JSON.parse(fs.delete_note(body.path || '')));
           }
           return jsonResponse(buildNote(fs, u.searchParams.get('path')));
         case '/api/missing-tags': return jsonResponse(buildMissingTags(fs, u.searchParams.get('note')));

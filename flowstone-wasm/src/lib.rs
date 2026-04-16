@@ -8,7 +8,7 @@ use std::io::{Cursor, Read};
 use wasm_bindgen::prelude::*;
 
 use cozo::{new_cozo_mem, DataValue, Db, MemStorage, ScriptMutability};
-use flowstone_core::{build, dangling_count, link_count, note_count, Note};
+use flowstone_core::{build, dangling_count, link_count, note_count, parse_links, Note};
 
 // When the `fts` feature is on we build a tantivy full-text index directly —
 // bypassing cozo's ::fts create because tantivy's IndexWriter always spawns
@@ -143,17 +143,73 @@ impl Flowstone {
         if path.is_empty() || path.contains("..") {
             return error_json("invalid path");
         }
+        let body = format!("# {}\n\n", title_from_path(path));
+        self.upsert_note(path, &body)
+    }
+
+    /// Upsert a note with an explicit body and rebuild its outgoing links.
+    /// Used by github-save.js to mirror a GitHub commit into the in-memory
+    /// database so the graph reflects the change without a zip reload.
+    pub fn upsert_note(&mut self, path: &str, body: &str) -> String {
+        let path = path.trim();
+        if path.is_empty() || path.contains("..") {
+            return error_json("invalid path");
+        }
         let title = title_from_path(path);
-        let body = format!("# {}\n\n", title);
         let note = Note {
             path: path.to_string(),
             title,
-            body,
-            size: 0,
+            body: body.to_string(),
+            size: body.len() as u64,
             modified: 0.0,
         };
+        // Drop old outbound links first — the body may have lost or renamed
+        // wiki-links since the previous snapshot, and :put on links only
+        // unions, never prunes.
+        let mut params = BTreeMap::new();
+        params.insert("p".to_string(), DataValue::Str(path.into()));
+        if let Err(e) = self.db.run_script(
+            "?[source, target] := *links[source, target], source = $p :rm links {source, target}",
+            params,
+            ScriptMutability::Mutable,
+        ) {
+            return error_json(&format!("delete links: {e:?}"));
+        }
+        let new_links = parse_links(path, body);
         flowstone_core::load_notes(&self.db, &[note]);
+        flowstone_core::load_links(&self.db, &new_links);
         self.notes = note_count(&self.db);
+        self.links = link_count(&self.db);
+        r#"{"ok":true}"#.to_string()
+    }
+
+    /// Remove a note and its outbound links from the in-memory database.
+    /// Inbound links (others linking *to* this path) are left in place — the
+    /// path simply becomes a dangling target, matching what the native
+    /// scanner produces when a file is deleted on disk.
+    pub fn delete_note(&mut self, path: &str) -> String {
+        let path = path.trim();
+        if path.is_empty() {
+            return error_json("invalid path");
+        }
+        let mut params = BTreeMap::new();
+        params.insert("p".to_string(), DataValue::Str(path.into()));
+        if let Err(e) = self.db.run_script(
+            "?[path] := *notes{path}, path = $p :rm notes {path}",
+            params.clone(),
+            ScriptMutability::Mutable,
+        ) {
+            return error_json(&format!("delete note: {e:?}"));
+        }
+        if let Err(e) = self.db.run_script(
+            "?[source, target] := *links[source, target], source = $p :rm links {source, target}",
+            params,
+            ScriptMutability::Mutable,
+        ) {
+            return error_json(&format!("delete links: {e:?}"));
+        }
+        self.notes = note_count(&self.db);
+        self.links = link_count(&self.db);
         r#"{"ok":true}"#.to_string()
     }
 

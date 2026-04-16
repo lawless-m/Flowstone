@@ -592,12 +592,15 @@
       });
       if (!delRes.ok) throw new Error(`DELETE ${delRes.status}: ${await delRes.text()}`);
 
+      // Mirror the rename into the in-memory cozo: upsert under newPath
+      // with the decoded body (so wiki-links parse), then drop oldPath.
+      const decoded = base64ToUtf8(b64);
+      await syncLocalDb(newPath, decoded);
+      await syncLocalDelete(oldPath);
+
       setPanelStatus(`Renamed to ${newPath}.`, 'ok');
-      document.getElementById('detail-title').textContent = newPath;
-      // Update the path shown in meta so further operations use the new name
-      const code = document.querySelector('#detail-meta code');
-      if (code) code.textContent = newPath;
       restoreNoteControls();
+      await window.flowstone?.selectByPath?.(newPath);
     } catch (e) {
       setPanelStatus(e.message, 'err');
       restoreNoteControls();
@@ -627,10 +630,47 @@
       });
       if (!delRes.ok) throw new Error(`DELETE ${delRes.status}: ${await delRes.text()}`);
 
+      await syncLocalDelete(path);
+      await window.flowstone?.reload?.();
       document.getElementById('details').hidden = true;
     } catch (e) {
       setPanelStatus(e.message, 'err');
     }
+  }
+
+  // Mirror a just-committed note into the in-memory cozo so the graph
+  // reflects the change without requiring a zip reload.
+  async function syncLocalDb(path, body) {
+    try {
+      await fetch('/api/note', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path, body }),
+      });
+    } catch (e) {
+      console.warn('[gh-save] local cozo sync failed', e);
+    }
+  }
+
+  async function syncLocalDelete(path) {
+    try {
+      await fetch('/api/note', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+    } catch (e) {
+      console.warn('[gh-save] local cozo delete failed', e);
+    }
+  }
+
+  // GitHub returns note content as base64. Decode to UTF-8 so we can
+  // re-parse wiki-links for the in-memory cozo on rename.
+  function base64ToUtf8(b64) {
+    const bin = atob(b64.replace(/\s/g, ''));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
   }
 
   // ---- GitHub API ----
@@ -647,7 +687,12 @@
 
     const content = ta.value.replace(/\{\{title\}\}/g, notePath);
     const ok = await saveToGitHub(content, notePath, isNew);
-    if (ok) closeEditor(isNew ? null : path);
+    if (!ok) return;
+
+    await syncLocalDb(notePath, content);
+    clearDraft(isNew ? null : notePath);
+    document.getElementById('gh-editor-overlay')?.remove();
+    await window.flowstone?.selectByPath?.(notePath);
   }
 
   async function saveToGitHub(content, notePath, isNew = false) {

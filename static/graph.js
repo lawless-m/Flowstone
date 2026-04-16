@@ -814,7 +814,16 @@
     if (currentView === 'tagnet') { tagNetDirty = true; renderTagNet(); }
   });
 
-  window.flowstone = { loadBody, showTagDetails };
+  window.flowstone = {
+    loadBody,
+    showTagDetails,
+    reload: () => Promise.all([loadGraph(), loadTags(), loadTagGraph()]),
+    selectByPath: async (path) => {
+      await Promise.all([loadGraph(), loadTags(), loadTagGraph()]);
+      const n = graph.nodes.find(x => x.id === path);
+      if (n) selectNode(n); else loadBody(path);
+    },
+  };
 
   loadGraph();
   loadTags();
