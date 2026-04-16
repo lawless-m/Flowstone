@@ -333,9 +333,20 @@
 
     const radius = d => 4 + Math.sqrt(d.in_degree + 1) * 2;
 
+    // in-degree colour ramp: the hub threshold is 4 (see buildGraph), but
+    // notes with 2 or 3 inbound links are still meaningful shared targets.
+    // Interpolate between the hub accent and the dim grey rather than have
+    // everything below 4 look identical.
+    const nodeFill = inDeg => {
+      if (inDeg >= 4) return '#e94560'; // hub accent
+      if (inDeg === 3) return '#c46078';
+      if (inDeg === 2) return '#a88296';
+      return '#7f8fa6';                 // 0–1: text-dim
+    };
+
     nodeSel.append('circle')
       .attr('r', radius)
-      .attr('fill', d => d.is_hub ? '#e94560' : '#7f8fa6')
+      .attr('fill', d => nodeFill(d.in_degree))
       .attr('stroke', '#0f3460')
       .attr('stroke-width', 1);
 
