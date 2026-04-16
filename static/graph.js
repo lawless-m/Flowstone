@@ -729,6 +729,7 @@
     document.getElementById('graph').style.display  = view === 'net'     ? '' : 'none';
     document.getElementById('cloud').hidden          = view !== 'cloud';
     document.getElementById('tag-net').hidden        = view !== 'tagnet';
+    document.getElementById('tags').hidden           = view !== 'net';
     if (view === 'cloud')  renderCloud();
     if (view === 'tagnet') renderTagNet();
   }
