@@ -22,8 +22,10 @@ export function installShim(fs) {
         case '/api/tags':         return jsonResponse(buildTags(fs));
         case '/api/tag-graph':    return jsonResponse(buildTagGraph(fs));
         case '/api/note':
-          if (init && init.method === 'POST')
-            return jsonResponse({ ok: false, message: 'read-only in zip mode' });
+          if (init && init.method === 'POST') {
+            const body = init.body ? JSON.parse(init.body) : {};
+            return jsonResponse(JSON.parse(fs.create_note(body.path || '')));
+          }
           return jsonResponse(buildNote(fs, u.searchParams.get('path')));
         case '/api/missing-tags': return jsonResponse(buildMissingTags(fs, u.searchParams.get('note')));
         case '/api/search':       return jsonResponse(buildSearch(fs, u.searchParams.get('q')));

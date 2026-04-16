@@ -136,6 +136,27 @@ impl Flowstone {
         serde_json::json!({"hits": hits}).to_string()
     }
 
+    /// Insert a new empty note into the in-memory database.
+    /// Returns `{"ok":true}` on success or `{"ok":false,"message":"..."}`.
+    pub fn create_note(&mut self, path: &str) -> String {
+        let path = path.trim();
+        if path.is_empty() || path.contains("..") {
+            return error_json("invalid path");
+        }
+        let title = path.rsplit('/').next().unwrap_or(path).to_string();
+        let body = format!("# {}\n\n", title);
+        let note = flowstone_core::Note {
+            path: path.to_string(),
+            title,
+            body,
+            size: 0,
+            modified: 0.0,
+        };
+        flowstone_core::load_notes(&self.db, &[note]);
+        self.notes += 1;
+        r#"{"ok":true}"#.to_string()
+    }
+
     pub fn run(&self, script: &str, params: &str, immutable: bool) -> String {
         let params_map = match parse_params(params) {
             Ok(p) => p,
