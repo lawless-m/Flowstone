@@ -407,6 +407,20 @@ aside ul li.empty {
   font-size: 12px;
 }
 
+.new-note-btn {
+  display: block;
+  margin-top: 12px;
+  background: var(--bg-deep);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 5px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.new-note-btn:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.new-note-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 #detail-missing-tags li {
   padding: 6px 0;
   display: block;

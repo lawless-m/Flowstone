@@ -187,7 +187,36 @@
       if (mySeq !== bodySeq) return;
       const data = await res.json();
       if (!data.ok) {
-        el.innerHTML = '<em class="empty">(not found)</em>';
+        el.innerHTML = '';
+        const msg = document.createElement('em');
+        msg.className = 'empty';
+        msg.textContent = '(not found)';
+        el.appendChild(msg);
+        const btn = document.createElement('button');
+        btn.className = 'new-note-btn';
+        btn.textContent = 'New';
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = 'Creating…';
+          try {
+            const r = await fetch('/api/note', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ path: notePath }),
+            });
+            const result = await r.json();
+            if (result.ok) {
+              loadBody(notePath);
+            } else {
+              msg.textContent = result.message || 'error';
+              btn.remove();
+            }
+          } catch (e) {
+            msg.textContent = e.message || 'error';
+            btn.remove();
+          }
+        });
+        el.appendChild(btn);
         return;
       }
       const body = data.body || '';

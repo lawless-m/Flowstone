@@ -9,7 +9,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         Html, IntoResponse, Response,
     },
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures::Stream;
@@ -162,7 +162,7 @@ pub async fn run(
         .route("/api/tags", get(tags_json))
         .route("/api/tag-graph", get(tag_graph_json))
         .route("/api/missing-tags", get(missing_tags_json))
-        .route("/api/note", get(note_json))
+        .route("/api/note", get(note_json).post(create_note_json))
         .route("/api/events", get(events))
         .with_state(state);
 
@@ -650,6 +650,37 @@ fn fetch_note(db: &FlowstoneDb, path: String) -> Option<NoteResponse> {
             eprintln!("[note] query failed: {}", e);
             None
         }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CreateNoteBody {
+    path: String,
+}
+
+async fn create_note_json(
+    State(state): State<AppState>,
+    Json(body): Json<CreateNoteBody>,
+) -> Response {
+    let path = body.path.trim().to_string();
+    if path.is_empty() || path.contains("..") {
+        return Json(serde_json::json!({"ok": false, "message": "invalid path"})).into_response();
+    }
+    let file_path = state.notes_dir.join(&path).with_extension("md");
+    let title = std::path::Path::new(&path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let content = format!("# {}\n\n", title);
+    if let Some(parent) = file_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Json(serde_json::json!({"ok": false, "message": e.to_string()})).into_response();
+        }
+    }
+    match std::fs::write(&file_path, &content) {
+        Ok(_) => Json(serde_json::json!({"ok": true})).into_response(),
+        Err(e) => Json(serde_json::json!({"ok": false, "message": e.to_string()})).into_response(),
     }
 }
 
