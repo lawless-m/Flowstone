@@ -206,7 +206,9 @@
             });
             const result = await r.json();
             if (result.ok) {
-              loadBody(notePath);
+              await Promise.all([loadGraph(), loadTags(), loadTagGraph()]);
+              const newNode = graph.nodes.find(n => n.id === notePath);
+              if (newNode) selectNode(newNode); else loadBody(notePath);
             } else {
               msg.textContent = result.message || 'error';
               btn.remove();
