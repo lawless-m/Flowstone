@@ -5,6 +5,7 @@ target/
 
 # wasm-pack output is a build artefact — rebuilt via flowstone-wasm/build.sh.
 flowstone-wasm/pkg/
+flowstone-wasm/pkg-fts/
 # Flat-directory deployable produced by flowstone-wasm/build.sh.
 flowstone-wasm/dist/
 # Locally-cached test corpus for the wasm demo; the prod path is
