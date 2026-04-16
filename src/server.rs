@@ -9,7 +9,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         Html, IntoResponse, Response,
     },
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use futures::Stream;
@@ -678,8 +678,12 @@ async fn create_note_json(
             return Json(serde_json::json!({"ok": false, "message": e.to_string()})).into_response();
         }
     }
-    match std::fs::write(&file_path, &content) {
-        Ok(_) => Json(serde_json::json!({"ok": true})).into_response(),
+    use std::io::Write;
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&file_path) {
+        Ok(mut f) => match f.write_all(content.as_bytes()) {
+            Ok(_) => Json(serde_json::json!({"ok": true})).into_response(),
+            Err(e) => Json(serde_json::json!({"ok": false, "message": e.to_string()})).into_response(),
+        },
         Err(e) => Json(serde_json::json!({"ok": false, "message": e.to_string()})).into_response(),
     }
 }

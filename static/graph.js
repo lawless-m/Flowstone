@@ -84,7 +84,44 @@
           setActiveTag(t.target);
         }
       });
+      if (!t.resolved) {
+        li.addEventListener('dblclick', async (e) => {
+          e.preventDefault();
+          await createNoteAndSelect(t.target);
+        });
+      }
       ul.appendChild(li);
+    }
+  }
+
+  const createNoteInFlight = new Set();
+  async function createNoteAndSelect(path) {
+    // On wasm, github-save.js installs an editor that goes through the
+    // PAT / GitHub Contents API — route to it so new notes actually
+    // persist. On native, this hook is absent and we write via /api/note.
+    if (typeof window.flowstone?.editNew === 'function') {
+      window.flowstone.editNew(path);
+      return { ok: true };
+    }
+    if (createNoteInFlight.has(path)) return { ok: false, message: 'already creating' };
+    createNoteInFlight.add(path);
+    try {
+      const r = await fetch('/api/note', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      const result = await r.json();
+      if (!result.ok) return result;
+      await Promise.all([loadGraph(), loadTags(), loadTagGraph()]);
+      const newNode = graph.nodes.find(n => n.id === path);
+      if (newNode) selectNode(newNode); else loadBody(path);
+      return result;
+    } catch (e) {
+      console.error('[create-note]', e);
+      return { ok: false, message: e.message || 'error' };
+    } finally {
+      createNoteInFlight.delete(path);
     }
   }
 
@@ -198,23 +235,9 @@
         btn.addEventListener('click', async () => {
           btn.disabled = true;
           btn.textContent = 'Creating…';
-          try {
-            const r = await fetch('/api/note', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ path: notePath }),
-            });
-            const result = await r.json();
-            if (result.ok) {
-              await Promise.all([loadGraph(), loadTags(), loadTagGraph()]);
-              const newNode = graph.nodes.find(n => n.id === notePath);
-              if (newNode) selectNode(newNode); else loadBody(notePath);
-            } else {
-              msg.textContent = result.message || 'error';
-              btn.remove();
-            }
-          } catch (e) {
-            msg.textContent = e.message || 'error';
+          const result = await createNoteAndSelect(notePath);
+          if (!result.ok) {
+            msg.textContent = result.message || 'error';
             btn.remove();
           }
         });

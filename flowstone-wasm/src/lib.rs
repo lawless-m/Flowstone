@@ -143,9 +143,9 @@ impl Flowstone {
         if path.is_empty() || path.contains("..") {
             return error_json("invalid path");
         }
-        let title = path.rsplit('/').next().unwrap_or(path).to_string();
+        let title = title_from_path(path);
         let body = format!("# {}\n\n", title);
-        let note = flowstone_core::Note {
+        let note = Note {
             path: path.to_string(),
             title,
             body,
@@ -153,7 +153,7 @@ impl Flowstone {
             modified: 0.0,
         };
         flowstone_core::load_notes(&self.db, &[note]);
-        self.notes += 1;
+        self.notes = note_count(&self.db);
         r#"{"ok":true}"#.to_string()
     }
 
@@ -228,6 +228,10 @@ fn build_fts_index(notes: &[Note]) -> Result<FtsHandle, String> {
     })
 }
 
+fn title_from_path(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
 fn parse_params(params: &str) -> Result<BTreeMap<String, DataValue>, String> {
     if params.is_empty() {
         return Ok(BTreeMap::new());
@@ -285,7 +289,7 @@ fn notes_from_zip(zip_bytes: &[u8]) -> Result<Vec<Note>, String> {
         }
 
         let path = rel_name[..rel_name.len() - 3].replace('\\', "/");
-        let title = path.rsplit('/').next().unwrap_or(&path).to_string();
+        let title = title_from_path(&path);
 
         let mut body = String::new();
         if let Err(e) = entry.read_to_string(&mut body) {

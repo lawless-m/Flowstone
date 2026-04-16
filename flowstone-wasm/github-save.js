@@ -740,6 +740,12 @@
     addHeaderButtons();
     watchDetails();
 
+    // Expose the new-note flow so graph.js's createNoteAndSelect routes
+    // through here instead of the in-memory POST /api/note path (which
+    // doesn't commit back to GitHub and is lost on reload).
+    window.flowstone = window.flowstone || {};
+    window.flowstone.editNew = (path) => showEditor('', path, true);
+
     // Clicking an unresolved [[wiki-link]] in a note body opens the
     // new-note editor pre-filled with that name. graph.js's handler
     // runs first but no-ops (no node found); ours fires next and acts.
