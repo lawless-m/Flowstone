@@ -527,6 +527,20 @@
     el.style.color      = kind === 'err' ? '#f4a0a0' : kind === 'ok' ? '#8dd5a8' : '#888';
   }
 
+  // GitHub's GET /contents is CDN-cached and can return a stale sha for
+  // ~60s after a write, causing 409 on the next PUT/DELETE. We cache the
+  // sha from successful write responses and cache-bust GETs.
+  const shaCache = new Map();
+
+  async function fetchCurrentSha(apiUrl, branch, headers) {
+    const url = `${apiUrl}?ref=${encodeURIComponent(branch)}&_=${Date.now()}`;
+    const res = await fetch(url, { headers, cache: 'no-store' });
+    if (!res.ok) throw new Error(`GET ${res.status} ${res.statusText}`);
+    const { sha } = await res.json();
+    shaCache.set(apiUrl, sha);
+    return sha;
+  }
+
   // ---- rename ----
   function renameNote(path) {
     if (!path) return;
@@ -566,31 +580,45 @@
     const { owner, repoName, branch, headers } = cfg;
     const base = `https://api.github.com/repos/${owner}/${repoName}/contents`;
 
+    const oldApiUrl = `${base}/${oldPath}.md`;
+    const newApiUrl = `${base}/${newPath}.md`;
+
     setPanelStatus('Fetching current file…');
     try {
-      // 1. GET old file — we need both SHA and raw base64 content
-      const getRes = await fetch(`${base}/${oldPath}.md?ref=${encodeURIComponent(branch)}`, { headers });
+      // 1. GET old file — we need both SHA and raw base64 content.
+      //    Cache-bust to dodge stale CDN reads after a recent save.
+      const getUrl = `${oldApiUrl}?ref=${encodeURIComponent(branch)}&_=${Date.now()}`;
+      const getRes = await fetch(getUrl, { headers, cache: 'no-store' });
       if (!getRes.ok) throw new Error(`GET ${getRes.status} ${getRes.statusText}`);
-      const { sha, content: b64 } = await getRes.json();
+      let { sha, content: b64 } = await getRes.json();
       const content = b64.replace(/\s/g, ''); // strip whitespace GitHub adds
+      shaCache.set(oldApiUrl, sha);
 
       // 2. PUT at new path (no sha = create)
       setPanelStatus('Creating new file…');
-      const putRes = await fetch(`${base}/${newPath}.md`, {
+      const putRes = await fetch(newApiUrl, {
         method: 'PUT',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: `rename ${oldPath} → ${newPath}`, content, branch }),
       });
       if (!putRes.ok) throw new Error(`PUT ${putRes.status}: ${await putRes.text()}`);
+      const putJson = await putRes.json().catch(() => null);
+      if (putJson?.content?.sha) shaCache.set(newApiUrl, putJson.content.sha);
 
-      // 3. DELETE old path
+      // 3. DELETE old path — retry once if sha has aged out.
       setPanelStatus('Removing old file…');
-      const delRes = await fetch(`${base}/${oldPath}.md`, {
+      const doDelete = (s) => fetch(oldApiUrl, {
         method: 'DELETE',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: `rename ${oldPath} → ${newPath}`, sha, branch }),
+        body: JSON.stringify({ message: `rename ${oldPath} → ${newPath}`, sha: s, branch }),
       });
+      let delRes = await doDelete(sha);
+      if (delRes.status === 409) {
+        sha = await fetchCurrentSha(oldApiUrl, branch, headers);
+        delRes = await doDelete(sha);
+      }
       if (!delRes.ok) throw new Error(`DELETE ${delRes.status}: ${await delRes.text()}`);
+      shaCache.delete(oldApiUrl);
 
       // Mirror the rename into the in-memory cozo: upsert under newPath
       // with the decoded body (so wiki-links parse), then drop oldPath.
@@ -616,20 +644,30 @@
     const { owner, repoName, branch, headers } = cfg;
     const apiUrl = `https://api.github.com/repos/${owner}/${repoName}/contents/${path}.md`;
 
-    setPanelStatus('Fetching SHA…');
     try {
-      const getRes = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, { headers });
-      if (!getRes.ok) throw new Error(`GET ${getRes.status} ${getRes.statusText}`);
-      const { sha } = await getRes.json();
-
-      setPanelStatus('Deleting…');
-      const delRes = await fetch(apiUrl, {
+      const doDelete = (sha) => fetch(apiUrl, {
         method: 'DELETE',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: `delete ${path}`, sha, branch }),
       });
+
+      let sha = shaCache.get(apiUrl);
+      if (!sha) {
+        setPanelStatus('Fetching SHA…');
+        sha = await fetchCurrentSha(apiUrl, branch, headers);
+      }
+
+      setPanelStatus('Deleting…');
+      let delRes = await doDelete(sha);
+      if (delRes.status === 409) {
+        shaCache.delete(apiUrl);
+        setPanelStatus('Conflict — refreshing…');
+        sha = await fetchCurrentSha(apiUrl, branch, headers);
+        delRes = await doDelete(sha);
+      }
       if (!delRes.ok) throw new Error(`DELETE ${delRes.status}: ${await delRes.text()}`);
 
+      shaCache.delete(apiUrl);
       await syncLocalDelete(path);
       await window.flowstone?.reload?.();
       document.getElementById('details').hidden = true;
@@ -716,28 +754,42 @@
     };
 
     try {
+      const doPut = (sha) => {
+        const body = {
+          message: `${isNew ? 'add' : 'update'} ${notePath}`,
+          content: utf8ToBase64(content),
+          branch,
+        };
+        if (sha) body.sha = sha;
+        return fetch(apiUrl, {
+          method: 'PUT',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      };
+
       let sha;
       if (!isNew) {
-        setModalStatus('Fetching SHA…');
-        const getRes = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, { headers });
-        if (!getRes.ok) throw new Error(`GET ${getRes.status} ${getRes.statusText}`);
-        sha = (await getRes.json()).sha;
+        sha = shaCache.get(apiUrl);
+        if (!sha) {
+          setModalStatus('Fetching SHA…');
+          sha = await fetchCurrentSha(apiUrl, branch, headers);
+        }
       }
 
       setModalStatus('Saving…');
-      const body = {
-        message: `${isNew ? 'add' : 'update'} ${notePath}`,
-        content: utf8ToBase64(content),
-        branch,
-      };
-      if (sha) body.sha = sha;
-
-      const putRes = await fetch(apiUrl, {
-        method: 'PUT',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      let putRes = await doPut(sha);
+      if (putRes.status === 409 && !isNew) {
+        shaCache.delete(apiUrl);
+        setModalStatus('Conflict — refreshing…');
+        sha = await fetchCurrentSha(apiUrl, branch, headers);
+        putRes = await doPut(sha);
+      }
       if (!putRes.ok) throw new Error(`PUT ${putRes.status}: ${await putRes.text()}`);
+
+      const putJson = await putRes.json().catch(() => null);
+      if (putJson?.content?.sha) shaCache.set(apiUrl, putJson.content.sha);
+
       setModalStatus('Saved.', 'ok');
       return true;
     } catch (e) {
