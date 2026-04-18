@@ -8,7 +8,11 @@ use std::io::{Cursor, Read};
 use wasm_bindgen::prelude::*;
 
 use cozo::{new_cozo_mem, DataValue, Db, MemStorage, ScriptMutability};
-use flowstone_core::{build, dangling_count, link_count, note_count, parse_links, Note};
+use flowstone_core::{
+    build, build_yaml, dangling_count, link_count, note_count, parse_links,
+    yaml::{parse_document, RawNode, Schema, YamlDocument},
+    Note,
+};
 
 // When the `fts` feature is on we build a tantivy full-text index directly —
 // bypassing cozo's ::fts create because tantivy's IndexWriter always spawns
@@ -20,7 +24,7 @@ use tantivy::{
     Index, IndexReader, IndexSettings, ReloadPolicy, SingleSegmentIndexWriter, TantivyDocument,
     collector::TopDocs,
     query::QueryParser,
-    schema::{Field, OwnedValue, Schema, STORED, STRING, TEXT},
+    schema::{Field, OwnedValue, Schema as TantivySchema, STORED, STRING, TEXT},
     store::Compressor,
 };
 
@@ -37,6 +41,9 @@ pub struct Flowstone {
     db: Db<MemStorage>,
     notes: usize,
     links: usize,
+    yaml_nodes: usize,
+    yaml_edges: usize,
+    yaml_schemas_json: String,
     #[cfg(feature = "fts")]
     fts: Option<FtsHandle>,
 }
@@ -55,14 +62,20 @@ impl Flowstone {
         let db = new_cozo_mem()
             .map_err(|e| JsError::new(&format!("failed to open cozo: {e}")))?;
 
-        let notes = notes_from_zip(zip_bytes)
+        let contents = read_zip(zip_bytes)
             .map_err(|e| JsError::new(&format!("failed to read zip: {e}")))?;
 
-        let stats = build(&db, &notes);
+        let stats = build(&db, &contents.notes);
+        let yaml_schemas_json = serde_json::to_string(&contents.schemas)
+            .unwrap_or_else(|_| "{}".to_string());
+        let yaml_stats = build_yaml(&db, &contents.schemas, contents.raw_nodes);
+        for w in &yaml_stats.warnings {
+            web_sys_warn(w);
+        }
 
         #[cfg(feature = "fts")]
         let fts = Some(
-            build_fts_index(&notes)
+            build_fts_index(&contents.notes)
                 .map_err(|e| JsError::new(&format!("failed to build FTS index: {e}")))?,
         );
 
@@ -70,6 +83,9 @@ impl Flowstone {
             db,
             notes: stats.notes,
             links: stats.links,
+            yaml_nodes: yaml_stats.nodes,
+            yaml_edges: yaml_stats.edges,
+            yaml_schemas_json,
             #[cfg(feature = "fts")]
             fts,
         })
@@ -93,6 +109,21 @@ impl Flowstone {
 
     pub fn live_link_count(&self) -> usize {
         link_count(&self.db)
+    }
+
+    pub fn yaml_node_count(&self) -> usize {
+        self.yaml_nodes
+    }
+
+    pub fn yaml_edge_count(&self) -> usize {
+        self.yaml_edges
+    }
+
+    /// Return the schema registry (edge kinds, node kinds, render hints)
+    /// as a JSON object keyed by schema filename. The JS side uses this
+    /// to know which relations to query and how to colour/shape nodes.
+    pub fn schemas_json(&self) -> String {
+        self.yaml_schemas_json.clone()
     }
 
     /// Run a Datalog script. `params` is a JSON object string (empty for
@@ -241,7 +272,7 @@ impl Flowstone {
 /// `Compressor::None` is used to avoid LZ4, which is unavailable in wasm.
 #[cfg(feature = "fts")]
 fn build_fts_index(notes: &[Note]) -> Result<FtsHandle, String> {
-    let mut builder = Schema::builder();
+    let mut builder = TantivySchema::builder();
     let key_field   = builder.add_text_field("path",  STRING | STORED);
     let title_field = builder.add_text_field("title", TEXT   | STORED);
     let body_field  = builder.add_text_field("body",  TEXT);
@@ -311,11 +342,19 @@ fn error_json(msg: &str) -> String {
     .to_string()
 }
 
-fn notes_from_zip(zip_bytes: &[u8]) -> Result<Vec<Note>, String> {
+struct ZipContents {
+    notes: Vec<Note>,
+    schemas: BTreeMap<String, Schema>,
+    raw_nodes: Vec<RawNode>,
+}
+
+fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
     let cursor = Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
 
     let mut notes = Vec::new();
+    let mut schemas: BTreeMap<String, Schema> = BTreeMap::new();
+    let mut raw_nodes: Vec<RawNode> = Vec::new();
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -338,34 +377,66 @@ fn notes_from_zip(zip_bytes: &[u8]) -> Result<Vec<Note>, String> {
             _ => raw_name.clone(),
         };
 
-        // Mirror the native scanner: `.md` only.
         let lower = rel_name.to_lowercase();
-        if !lower.ends_with(".md") {
-            continue;
+
+        if lower.ends_with(".md") {
+            let path = rel_name[..rel_name.len() - 3].replace('\\', "/");
+            let title = title_from_path(&path);
+            let mut body = String::new();
+            if let Err(e) = entry.read_to_string(&mut body) {
+                web_sys_warn(&format!("skipping {rel_name}: {e}"));
+                continue;
+            }
+            let size = body.len() as u64;
+            notes.push(Note {
+                path,
+                title,
+                body,
+                size,
+                modified: 0.0,
+            });
+        } else if lower.ends_with(".yaml") || lower.ends_with(".yml") || lower.ends_with(".schema")
+        {
+            // Content-based dispatch: a document with `schema:` at the top
+            // is a node; one with `edges:` or `nodes:` is a schema. The
+            // file extension is not load-bearing.
+            let mut body = String::new();
+            if entry.read_to_string(&mut body).is_err() {
+                web_sys_warn(&format!("skipping non-UTF8 yaml {rel_name}"));
+                continue;
+            }
+            let id = basename_no_ext(&rel_name);
+            match parse_document(&body, id.clone()) {
+                Ok(YamlDocument::Schema(s)) => {
+                    schemas.insert(basename(&rel_name), s);
+                }
+                Ok(YamlDocument::Node(n)) => raw_nodes.push(n),
+                Err(e) => web_sys_warn(&format!("yaml {rel_name}: {e}")),
+            }
         }
-
-        let path = rel_name[..rel_name.len() - 3].replace('\\', "/");
-        let title = title_from_path(&path);
-
-        let mut body = String::new();
-        if let Err(e) = entry.read_to_string(&mut body) {
-            // Non-UTF8 files: skip rather than fail the whole load.
-            web_sys_warn(&format!("skipping {rel_name}: {e}"));
-            continue;
-        }
-
-        let size = body.len() as u64;
-
-        notes.push(Note {
-            path,
-            title,
-            body,
-            size,
-            modified: 0.0,
-        });
     }
 
-    Ok(notes)
+    Ok(ZipContents {
+        notes,
+        schemas,
+        raw_nodes,
+    })
+}
+
+/// Last path segment, keeping the file extension. e.g.
+/// `.flowstone/schemas/infra.schema` → `infra.schema`.
+fn basename(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+/// Last path segment with any extension stripped. e.g.
+/// `data/x3customerpull.yaml` → `x3customerpull`.
+fn basename_no_ext(path: &str) -> String {
+    let leaf = path.rsplit('/').next().unwrap_or(path);
+    match leaf.rsplit_once('.') {
+        Some((stem, _)) => stem.to_string(),
+        None => leaf.to_string(),
+    }
 }
 
 // Log a warning to the browser console without taking a hard dep on web_sys.

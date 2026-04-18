@@ -1,0 +1,3 @@
+schema: infra.schema
+kind: table
+ddl_ref: schemas/x3rocs/customer.sql

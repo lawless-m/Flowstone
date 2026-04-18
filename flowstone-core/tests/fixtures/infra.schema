@@ -1,0 +1,34 @@
+edges:
+  hosts:
+    from: machine
+    to: service
+    directed: true
+  serves:
+    from: service
+    to: database
+    directed: true
+  table:
+    from: database
+    to: table
+    directed: true
+  api:
+    from: service
+    to: endpoint
+    directed: true
+  reads:
+    from: task
+    to: endpoint
+    colour: "#4a9eff"
+    directed: true
+  writes:
+    from: task
+    to: table
+    colour: "#e94560"
+    directed: true
+nodes:
+  machine:  { shape: box }
+  service:  { shape: hexagon }
+  database: { shape: cylinder }
+  table:    { shape: cylinder }
+  endpoint: { shape: ellipse }
+  task:     { shape: diamond }

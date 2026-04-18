@@ -88,6 +88,7 @@
   <button class="view-tab active" data-view="net">Net</button>
   <button class="view-tab" data-view="cloud">W-Cloud</button>
   <button class="view-tab" data-view="tagnet">Tags</button>
+  <button class="view-tab" data-view="yaml">YAML</button>
 </nav>
 <main>
   <aside id="tags">
@@ -99,6 +100,7 @@
   <svg id="graph"></svg>
   <div id="cloud" hidden></div>
   <svg id="tag-net" hidden></svg>
+  <svg id="yaml-graph" hidden></svg>
   <aside id="details" hidden>
     <button id="close-details" aria-label="Close">&times;</button>
     <h2 id="detail-title"></h2>
@@ -195,6 +197,10 @@
       const s = document.createElement('script');
       s.src = './graph.js';
       document.body.appendChild(s);
+
+      const ys = document.createElement('script');
+      ys.src = './yaml-graph.js';
+      document.body.appendChild(ys);
 
       const gs = document.createElement('script');
       gs.src = './github-save.js';

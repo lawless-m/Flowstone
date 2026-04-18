@@ -1,0 +1,5 @@
+schema: infra.schema
+kind: machine
+fqdn: rivsprod02.local
+hosts:
+  - postgresql

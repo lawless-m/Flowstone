@@ -1,0 +1,4 @@
+schema: infra.schema
+kind: service
+serves:
+  - x3rocs

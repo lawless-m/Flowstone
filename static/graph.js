@@ -797,12 +797,14 @@
     document.querySelectorAll('.view-tab').forEach(b => {
       b.classList.toggle('active', b.dataset.view === view);
     });
-    document.getElementById('graph').style.display    = view === 'net'     ? 'block' : 'none';
-    document.getElementById('cloud').style.display   = view === 'cloud'   ? 'block' : 'none';
-    document.getElementById('tag-net').style.display = view === 'tagnet'  ? 'block' : 'none';
-    document.getElementById('tags').style.display    = view === 'net'     ? 'block' : 'none';
+    document.getElementById('graph').style.display      = view === 'net'    ? 'block' : 'none';
+    document.getElementById('cloud').style.display      = view === 'cloud'  ? 'block' : 'none';
+    document.getElementById('tag-net').style.display    = view === 'tagnet' ? 'block' : 'none';
+    document.getElementById('yaml-graph').style.display = view === 'yaml'   ? 'block' : 'none';
+    document.getElementById('tags').style.display       = view === 'net'    ? 'block' : 'none';
     if (view === 'cloud')  renderCloud();
     if (view === 'tagnet') renderTagNet();
+    if (view === 'yaml')   window.flowstoneYaml?.render?.();
   }
 
   document.querySelectorAll('.view-tab').forEach(b => {
@@ -814,7 +816,9 @@
     if (currentView === 'tagnet') { tagNetDirty = true; renderTagNet(); }
   });
 
-  window.flowstone = {
+  // Merge with any keys yaml-graph.js (or other loaders) may have
+  // already planted on window.flowstone, rather than replacing wholesale.
+  window.flowstone = Object.assign(window.flowstone || {}, {
     loadBody,
     showTagDetails,
     reload: () => Promise.all([loadGraph(), loadTags(), loadTagGraph()]),
@@ -823,7 +827,7 @@
       const n = graph.nodes.find(x => x.id === path);
       if (n) selectNode(n); else loadBody(path);
     },
-  };
+  });
 
   loadGraph();
   loadTags();
