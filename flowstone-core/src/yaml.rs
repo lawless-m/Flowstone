@@ -11,9 +11,10 @@
 //!   edge name in that schema are treated as out-edges (string or list
 //!   of target ids); any other key is kept as an attribute.
 //!
-//! Schema lookup is by flat basename, so physical location in the
-//! corpus is irrelevant. Cross-schema edges are not supported — a node
-//! under one schema cannot target a node under another.
+//! Schema lookup is by flat filename stem (no extension, no path), so
+//! physical location in the corpus is irrelevant. Cross-schema edges
+//! are not supported — a node under one schema cannot target a node
+//! under another.
 
 use std::collections::BTreeMap;
 
@@ -207,12 +208,12 @@ pub fn resolve_node(raw: RawNode, schema: Option<&Schema>) -> (YamlNode, Vec<Str
 mod tests {
     use super::*;
 
-    const INFRA_SCHEMA: &str = include_str!("../tests/fixtures/infra.schema");
+    const INFRA_SCHEMA: &str = include_str!("../tests/fixtures/infra.yaml");
     const X3CUSTOMERPULL: &str = include_str!("../tests/fixtures/nodes/x3customerpull.yaml");
     const RIVSPROD02: &str = include_str!("../tests/fixtures/nodes/rivsprod02.yaml");
 
     fn infra() -> Schema {
-        parse_schema(INFRA_SCHEMA).expect("infra.schema parses")
+        parse_schema(INFRA_SCHEMA).expect("infra.yaml parses")
     }
 
     #[test]
@@ -235,7 +236,7 @@ mod tests {
     #[test]
     fn node_splits_edges_from_attrs() {
         let raw = parse_node(X3CUSTOMERPULL, "x3customerpull".to_string()).unwrap();
-        assert_eq!(raw.schema, "infra.schema");
+        assert_eq!(raw.schema, "infra");
         assert_eq!(raw.kind.as_deref(), Some("task"));
 
         let (node, warns) = resolve_node(raw, Some(&infra()));

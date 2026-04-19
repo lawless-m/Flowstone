@@ -1,4 +1,4 @@
-schema: infra.schema
+schema: infra
 kind: task
 cadence: hourly
 owner: ops

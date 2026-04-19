@@ -32,8 +32,8 @@ accumulates and hardens over time.
 
 The browser UI has four view tabs — the force-directed **Net**, a
 word-frequency **W-Cloud**, a **Tags** co-occurrence graph, and a
-**YAML** directed-graph tab that reads `*.yaml` / `*.schema` files in
-the corpus as typed graph nodes (useful for infra diagrams, data-flow
+**YAML** directed-graph tab that reads `*.yaml` / `*.yml` files in the
+corpus as typed graph nodes (useful for infra diagrams, data-flow
 sketches, and the like — see [YAML directed-graph](#yaml-directed-graph)
 below). The wasm build can also round-trip edits back to GitHub via
 the Contents API, for corpora served out of a repo.
@@ -107,17 +107,17 @@ the browser is nudged over an event stream so the view stays current.
 ## YAML directed-graph
 
 The YAML tab ingests two kinds of document from the corpus, told apart
-by their contents (the file extension is not load-bearing — `.yaml`,
-`.yml`, and `.schema` are all accepted):
+by their contents (any `.yaml` / `.yml` file will do):
 
 - A **schema** has `edges:` or `nodes:` at the top level. It declares
   the vocabulary: which edge kinds exist, which node kinds exist, and
   optional render hints (colour per edge, shape per node).
 - A **node** has `schema:` at the top level. It names the schema it
-  obeys, optionally a `kind:`, and then any keys whose names match an
-  edge in that schema become out-edges to other nodes.
+  obeys (by filename stem, not full filename), optionally a `kind:`,
+  and then any keys whose names match an edge in that schema become
+  out-edges to other nodes.
 
-Example schema (`infra.schema`):
+Example schema (`infra.yaml`):
 
 ```yaml
 edges:
@@ -135,7 +135,7 @@ nodes:
 Example node (`x3customerpull.yaml`):
 
 ```yaml
-schema: infra.schema
+schema: infra
 kind: task
 cadence: hourly
 owner: ops

@@ -395,11 +395,11 @@ fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
                 size,
                 modified: 0.0,
             });
-        } else if lower.ends_with(".yaml") || lower.ends_with(".yml") || lower.ends_with(".schema")
-        {
+        } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
             // Content-based dispatch: a document with `schema:` at the top
-            // is a node; one with `edges:` or `nodes:` is a schema. The
-            // file extension is not load-bearing.
+            // is a node; one with `edges:` or `nodes:` is a schema. Both
+            // schemas and nodes are keyed by filename stem (no extension),
+            // so a node writes `schema: infra` to reference `infra.yaml`.
             let mut body = String::new();
             if entry.read_to_string(&mut body).is_err() {
                 web_sys_warn(&format!("skipping non-UTF8 yaml {rel_name}"));
@@ -408,7 +408,7 @@ fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
             let id = basename_no_ext(&rel_name);
             match parse_document(&body, id.clone()) {
                 Ok(YamlDocument::Schema(s)) => {
-                    schemas.insert(basename(&rel_name), s);
+                    schemas.insert(id, s);
                 }
                 Ok(YamlDocument::Node(n)) => raw_nodes.push(n),
                 Err(e) => web_sys_warn(&format!("yaml {rel_name}: {e}")),
@@ -421,12 +421,6 @@ fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
         schemas,
         raw_nodes,
     })
-}
-
-/// Last path segment, keeping the file extension. e.g.
-/// `.flowstone/schemas/infra.schema` → `infra.schema`.
-fn basename(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
 /// Last path segment with any extension stripped. e.g.

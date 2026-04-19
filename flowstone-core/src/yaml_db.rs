@@ -5,9 +5,9 @@
 //! - A single meta relation `yaml_nodes { path => schema, kind, attrs_json }`
 //!   stores every node from every schema.
 //! - Per-(schema,edge-kind) relations of the form `<prefix>_<edge>` where
-//!   `<prefix>` comes from the schema filename with `.schema` stripped and
-//!   non-alphanumerics replaced with `_`. E.g. `infra.schema` + `reads`
-//!   → `infra_reads { source: String, target: String }`.
+//!   `<prefix>` is the schema's filename stem with non-alphanumerics
+//!   replaced with `_`. E.g. schema `infra` + edge `reads` →
+//!   `infra_reads { source: String, target: String }`.
 //!
 //! This keeps schemas disjoint at the relation level and matches how a
 //! user would write queries: `?[s, t] := *infra_reads[s, t]`.
@@ -24,11 +24,11 @@ pub struct YamlLoadStats {
     pub warnings: Vec<String>,
 }
 
-/// Turn "infra.schema" → "infra"; non-alphanumerics become `_` so the
-/// result is a safe cozo identifier.
+/// Normalise a schema name into a safe cozo relation prefix —
+/// non-alphanumerics become `_`. e.g. `my-domain` → `my_domain`.
 pub fn schema_prefix(schema_name: &str) -> String {
-    let stem = schema_name.strip_suffix(".schema").unwrap_or(schema_name);
-    stem.chars()
+    schema_name
+        .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect()
 }
@@ -185,7 +185,7 @@ mod tests {
     use crate::yaml::{parse_node, parse_schema};
     use cozo::new_cozo_mem;
 
-    const INFRA_SCHEMA: &str = include_str!("../tests/fixtures/infra.schema");
+    const INFRA_SCHEMA: &str = include_str!("../tests/fixtures/infra.yaml");
     const X3CUSTOMERPULL: &str = include_str!("../tests/fixtures/nodes/x3customerpull.yaml");
     const RIVSPROD02: &str = include_str!("../tests/fixtures/nodes/rivsprod02.yaml");
     const POSTGRESQL: &str = include_str!("../tests/fixtures/nodes/postgresql.yaml");
@@ -193,10 +193,7 @@ mod tests {
 
     fn corpus() -> (BTreeMap<String, Schema>, Vec<RawNode>) {
         let mut schemas = BTreeMap::new();
-        schemas.insert(
-            "infra.schema".to_string(),
-            parse_schema(INFRA_SCHEMA).unwrap(),
-        );
+        schemas.insert("infra".to_string(), parse_schema(INFRA_SCHEMA).unwrap());
         let raws = vec![
             parse_node(X3CUSTOMERPULL, "x3customerpull".into()).unwrap(),
             parse_node(RIVSPROD02, "rivsprod02".into()).unwrap(),
@@ -207,10 +204,10 @@ mod tests {
     }
 
     #[test]
-    fn prefix_strips_schema_suffix() {
-        assert_eq!(schema_prefix("infra.schema"), "infra");
-        assert_eq!(schema_prefix("my-domain.schema"), "my_domain");
-        assert_eq!(schema_prefix("weird.name.schema"), "weird_name");
+    fn prefix_sanitises_schema_name() {
+        assert_eq!(schema_prefix("infra"), "infra");
+        assert_eq!(schema_prefix("my-domain"), "my_domain");
+        assert_eq!(schema_prefix("weird.name"), "weird_name");
     }
 
     #[test]

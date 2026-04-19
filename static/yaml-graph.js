@@ -10,11 +10,10 @@
 (function () {
   const svgSel = () => d3.select('#yaml-graph');
 
-  // "infra.schema" → "infra"; non-alphanumerics → '_'. Mirrors the
-  // schema_prefix() helper in flowstone-core/src/yaml_db.rs.
+  // Sanitise a schema name to a safe cozo identifier: non-alphanumerics
+  // → '_'. Mirrors schema_prefix() in flowstone-core/src/yaml_db.rs.
   function schemaPrefix(name) {
-    const stem = name.endsWith('.schema') ? name.slice(0, -'.schema'.length) : name;
-    return stem.replace(/[^a-zA-Z0-9]/g, '_');
+    return name.replace(/[^a-zA-Z0-9]/g, '_');
   }
 
   function runQuery(script) {
