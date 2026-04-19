@@ -34,8 +34,9 @@ The browser UI has four view tabs — the force-directed **Net**, a
 word-frequency **W-Cloud**, a **Tags** co-occurrence graph, and a
 **YAML** directed-graph tab that reads `*.yaml` / `*.schema` files in
 the corpus as typed graph nodes (useful for infra diagrams, data-flow
-sketches, and the like). The wasm build can also round-trip edits back
-to GitHub via the Contents API, for corpora served out of a repo.
+sketches, and the like — see [YAML directed-graph](#yaml-directed-graph)
+below). The wasm build can also round-trip edits back to GitHub via
+the Contents API, for corpora served out of a repo.
 
 The Markdown files are always the source of truth. Flowstone itself
 never writes to disk — the GitHub round-trip is the user's own commit,
@@ -102,6 +103,58 @@ handful of useful queries to get you started, see
 `static/` and exposes JSON endpoints for notes, tags, search, and the
 graph. A filesystem watcher re-runs the pipeline when notes change, and
 the browser is nudged over an event stream so the view stays current.
+
+## YAML directed-graph
+
+The YAML tab ingests two kinds of document from the corpus, told apart
+by their contents (the file extension is not load-bearing — `.yaml`,
+`.yml`, and `.schema` are all accepted):
+
+- A **schema** has `edges:` or `nodes:` at the top level. It declares
+  the vocabulary: which edge kinds exist, which node kinds exist, and
+  optional render hints (colour per edge, shape per node).
+- A **node** has `schema:` at the top level. It names the schema it
+  obeys, optionally a `kind:`, and then any keys whose names match an
+  edge in that schema become out-edges to other nodes.
+
+Example schema (`infra.schema`):
+
+```yaml
+edges:
+  hosts:  { from: machine, to: service, directed: true }
+  reads:  { from: task, to: endpoint, colour: "#4a9eff", directed: true }
+  writes: { from: task, to: table,    colour: "#e94560", directed: true }
+nodes:
+  machine:  { shape: box }
+  service:  { shape: hexagon }
+  table:    { shape: cylinder }
+  endpoint: { shape: ellipse }
+  task:     { shape: diamond }
+```
+
+Example node (`x3customerpull.yaml`):
+
+```yaml
+schema: infra.schema
+kind: task
+cadence: hourly
+owner: ops
+reads:
+  - x3-customer-api
+writes:
+  - x3rocs-customer
+```
+
+Node ids are the filename (without extension), so `reads:` here points
+at a sibling YAML file called `x3-customer-api.yaml`. Targets with no
+YAML file of their own still appear in the graph as dashed placeholder
+nodes, which is often the quickest way to notice that a design sketch
+has a hole in it. A node can also have a sibling Markdown file of the
+same stem (`x3customerpull.md`) — the detail pane will load it
+automatically, so the DDL or design doc travels with the node.
+
+Cross-schema edges are not supported: a node declared under one schema
+can only target nodes under the same schema.
 
 ## Repo layout
 
