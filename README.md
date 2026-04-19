@@ -18,16 +18,28 @@ accumulates and hardens over time.
   graph-shaped questions in Datalog.
 - Rebuilds from the Markdown on every run — the database is purely
   derived, so delete it whenever you like.
-- Offers two ways to poke at it:
+- Offers three ways to poke at it:
   - a **REPL** for raw Datalog queries
   - a **web server** with a browser UI, graph visualisation, tag
     sidebar, full-text search (tantivy, via Cozo's FTS), live
     file-watching so edits show up without restarting, and a detail
     panel that renders each note's Markdown body with clickable
     wiki-links for in-app navigation.
+  - an **in-browser wasm build** (`flowstone-wasm/`) that runs the
+    whole pipeline client-side — point it at a zip of Markdown and it
+    builds the graph in the browser with no server. Live at
+    <https://steponnopets.net/flowstone/>.
 
-The Markdown files are always the source of truth. Flowstone never writes
-back to them.
+The browser UI has four view tabs — the force-directed **Net**, a
+word-frequency **W-Cloud**, a **Tags** co-occurrence graph, and a
+**YAML** directed-graph tab that reads `*.yaml` / `*.schema` files in
+the corpus as typed graph nodes (useful for infra diagrams, data-flow
+sketches, and the like). The wasm build can also round-trip edits back
+to GitHub via the Contents API, for corpora served out of a repo.
+
+The Markdown files are always the source of truth. Flowstone itself
+never writes to disk — the GitHub round-trip is the user's own commit,
+on their own credentials.
 
 ## Building
 
@@ -94,7 +106,8 @@ the browser is nudged over an event stream so the view stays current.
 ## Repo layout
 
 ```
-flowstone-core/ Library crate: parser, schema, bulk loaders, counts
+flowstone-core/ Library crate: parser, schema, bulk loaders, counts,
+                YAML schema/node parsers and cozo population
 src/
   main.rs       CLI entry point — dispatches to REPL or server
   scanner.rs    Walks the notes directory
@@ -103,7 +116,9 @@ src/
   repl.rs       Datalog REPL (rustyline)
   server.rs     Axum web server + JSON API
   watcher.rs    notify-based filesystem watcher
-static/         Browser UI: index.html, style.css, graph.js
+static/         Browser UI: index.html, graph.js, yaml-graph.js, style.css
+flowstone-wasm/ In-browser build — crate, JS shim, GitHub save helper,
+                build.sh (standard + FTS bundles), deploy.sh
 flowstone-spec/ Design notes and schema reference
 prompts/        Prompts for optional LLM-assisted tagging
 ```
@@ -111,7 +126,8 @@ prompts/        Prompts for optional LLM-assisted tagging
 The workspace is a Cargo workspace: `flowstone-core` is a library that
 any other tool can depend on to ingest a notes directory into a Cozo
 database, and the `flowstone` binary is the CLI and web server built
-on top of it.
+on top of it. `flowstone-wasm` is a third crate in the workspace that
+reuses the same core to run the pipeline in a browser.
 
 ## Status
 
