@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 use cozo::{new_cozo_mem, DataValue, Db, MemStorage, ScriptMutability};
 use flowstone_core::{
     build, build_yaml, dangling_count, link_count, note_count, parse_links,
-    yaml::{parse_document, RawNode, Schema, YamlDocument},
+    yaml::{parse_document, NodeDoc, Schema, YamlDocument},
     Note,
 };
 
@@ -68,7 +68,7 @@ impl Flowstone {
         let stats = build(&db, &contents.notes);
         let yaml_schemas_json = serde_json::to_string(&contents.schemas)
             .unwrap_or_else(|_| "{}".to_string());
-        let yaml_stats = build_yaml(&db, &contents.schemas, contents.raw_nodes);
+        let yaml_stats = build_yaml(&db, &contents.schemas, contents.docs);
         for w in &yaml_stats.warnings {
             web_sys_warn(w);
         }
@@ -345,7 +345,7 @@ fn error_json(msg: &str) -> String {
 struct ZipContents {
     notes: Vec<Note>,
     schemas: BTreeMap<String, Schema>,
-    raw_nodes: Vec<RawNode>,
+    docs: Vec<NodeDoc>,
 }
 
 fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
@@ -354,7 +354,7 @@ fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
 
     let mut notes = Vec::new();
     let mut schemas: BTreeMap<String, Schema> = BTreeMap::new();
-    let mut raw_nodes: Vec<RawNode> = Vec::new();
+    let mut docs: Vec<NodeDoc> = Vec::new();
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -397,9 +397,10 @@ fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
             });
         } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
             // Content-based dispatch: a document with `schema:` at the top
-            // is a node; one with `edges:` or `nodes:` is a schema. Both
-            // schemas and nodes are keyed by filename stem (no extension),
-            // so a node writes `schema: infra` to reference `infra.yaml`.
+            // is a nodes-document; one with `edges:` or `nodes:` is a
+            // schema. Both are keyed by filename stem — so a nodes-doc
+            // writes `schema: infra` to reference a schema file named
+            // `infra.yaml`.
             let mut body = String::new();
             if entry.read_to_string(&mut body).is_err() {
                 web_sys_warn(&format!("skipping non-UTF8 yaml {rel_name}"));
@@ -410,7 +411,7 @@ fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
                 Ok(YamlDocument::Schema(s)) => {
                     schemas.insert(id, s);
                 }
-                Ok(YamlDocument::Node(n)) => raw_nodes.push(n),
+                Ok(YamlDocument::Nodes(d)) => docs.push(d),
                 Err(e) => web_sys_warn(&format!("yaml {rel_name}: {e}")),
             }
         }
@@ -419,7 +420,7 @@ fn read_zip(zip_bytes: &[u8]) -> Result<ZipContents, String> {
     Ok(ZipContents {
         notes,
         schemas,
-        raw_nodes,
+        docs,
     })
 }
 

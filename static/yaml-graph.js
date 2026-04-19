@@ -1,18 +1,18 @@
-// yaml-graph.js — renders the YAML directed-graph tab.
+// yaml-graph.js — one directed-graph tab per YAML nodes-document.
 //
-// Reads schema metadata via fs.schemas_json() (colour/shape hints) and
-// node/edge rows via fs.run() over the yaml_nodes relation plus the
-// per-(schema, edge-kind) relations produced by flowstone-core. Force-
-// directed layout, arrowhead markers on directed edges, shape per node
-// kind. Clicking a node fires window.flowstone.loadYamlNode(path) so
-// graph.js / github-save.js can own the detail pane.
+// On init() we enumerate `yaml_docs` and inject a `.view-tab` button
+// for each document, wired to `window.flowstone.setView('yaml-<doc>')`.
+// render() reads the current doc, queries its nodes from `yaml_nodes`
+// and its edges from per-(doc, edge-kind) relations `<doc_prefix>_<edge>`
+// produced by flowstone-core/src/yaml_db.rs.
 
 (function () {
   const svgSel = () => d3.select('#yaml-graph');
 
-  // Sanitise a schema name to a safe cozo identifier: non-alphanumerics
-  // → '_'. Mirrors schema_prefix() in flowstone-core/src/yaml_db.rs.
-  function schemaPrefix(name) {
+  let currentDoc = null;
+
+  // Mirrors doc_prefix() in flowstone-core/src/yaml_db.rs.
+  function docPrefix(name) {
     return name.replace(/[^a-zA-Z0-9]/g, '_');
   }
 
@@ -21,49 +21,81 @@
     try { return JSON.parse(raw); } catch { return { rows: [] }; }
   }
 
+  function listDocs() {
+    if (!window.fs) return [];
+    const res = runQuery('?[doc, schema] := *yaml_docs{doc, schema}');
+    return (res.rows || []).map(([doc, schema]) => ({ doc, schema }));
+  }
+
+  function setDoc(doc) {
+    currentDoc = doc;
+  }
+
+  function init() {
+    const nav = document.getElementById('view-tabs');
+    if (!nav) return;
+    // Strip any previously-injected yaml tabs so re-init after a reload
+    // doesn't pile duplicates up.
+    nav.querySelectorAll('.view-tab[data-yaml-doc]').forEach(b => b.remove());
+
+    const docs = listDocs();
+    if (docs.length === 0) return;
+
+    for (const { doc } of docs) {
+      const btn = document.createElement('button');
+      btn.className = 'view-tab';
+      btn.dataset.view = `yaml-${doc}`;
+      btn.dataset.yamlDoc = doc;
+      btn.textContent = doc;
+      btn.addEventListener('click', () => window.flowstone?.setView?.(`yaml-${doc}`));
+      nav.appendChild(btn);
+    }
+
+    if (!currentDoc) currentDoc = docs[0].doc;
+  }
+
   function loadYamlGraph() {
-    if (!window.fs) return { nodes: [], links: [], schemas: {} };
+    if (!window.fs || !currentDoc) return { nodes: [], links: [], schemas: {} };
 
     let schemas = {};
     try { schemas = JSON.parse(window.fs.schemas_json() || '{}'); } catch {}
 
-    // Nodes
+    const docRow = runQuery(
+      `?[schema] := *yaml_docs{doc, schema}, doc = '${currentDoc}'`
+    ).rows || [];
+    const schemaName = docRow[0]?.[0] || null;
+    const schemaDef = schemaName ? schemas[schemaName] : null;
+
     const nodeRows = runQuery(
-      '?[path, schema, kind, attrs_json] := *yaml_nodes{path, schema, kind, attrs_json}'
+      `?[id, kind, attrs_json] := *yaml_nodes{id, doc, kind, attrs_json}, doc = '${currentDoc}'`
     ).rows || [];
     const nodeMap = new Map();
-    for (const [path, schema, kind, attrs_json] of nodeRows) {
-      nodeMap.set(path, { id: path, schema, kind, attrs_json, phantom: false });
+    for (const [id, kind, attrs_json] of nodeRows) {
+      nodeMap.set(id, { id, doc: currentDoc, schema: schemaName, kind, attrs_json, phantom: false });
     }
 
-    // Edges — one query per (schema, edge-kind) pair, tagged with kind + colour.
     const links = [];
-    for (const [schemaName, schemaDef] of Object.entries(schemas)) {
-      const prefix = schemaPrefix(schemaName);
-      for (const [kind, spec] of Object.entries(schemaDef.edges || {})) {
-        const rel = `${prefix}_${kind}`;
-        const res = runQuery(`?[s, t] := *${rel}[s, t]`);
-        for (const [s, t] of (res.rows || [])) {
-          links.push({
-            source: s,
-            target: t,
-            kind,
-            schema: schemaName,
-            colour: spec.colour || '#7f8fa6',
-            directed: spec.directed !== false,
-          });
-          // Target may be a yaml file we never saw — give it a placeholder
-          // node so the graph stays connected, marked phantom for render.
-          if (!nodeMap.has(t)) {
-            nodeMap.set(t, { id: t, schema: schemaName, kind: '?', attrs_json: '{}', phantom: true });
-          }
+    const prefix = docPrefix(currentDoc);
+    for (const [kind, spec] of Object.entries(schemaDef?.edges || {})) {
+      const rel = `${prefix}_${kind}`;
+      const res = runQuery(`?[s, t] := *${rel}[s, t]`);
+      for (const [s, t] of (res.rows || [])) {
+        links.push({
+          source: s,
+          target: t,
+          kind,
+          colour: spec.colour || '#7f8fa6',
+          directed: spec.directed !== false,
+        });
+        if (!nodeMap.has(t)) {
+          nodeMap.set(t, { id: t, doc: currentDoc, schema: schemaName, kind: '?', attrs_json: '{}', phantom: true });
         }
       }
     }
 
     const nodes = [...nodeMap.values()];
     for (const n of nodes) {
-      const spec = schemas[n.schema]?.nodes?.[n.kind];
+      const spec = schemaDef?.nodes?.[n.kind];
       n.shape = spec?.shape || 'circle';
     }
 
@@ -114,12 +146,14 @@
     const svg = svgSel();
     svg.selectAll('*').remove();
 
-    const { nodes, links, schemas } = loadYamlGraph();
+    const { nodes, links } = loadYamlGraph();
     if (nodes.length === 0) {
       svg.append('text')
         .attr('x', 30).attr('y', 40)
         .attr('fill', '#888').attr('font-family', 'monospace')
-        .text('No YAML nodes in this corpus.');
+        .text(currentDoc
+          ? `No nodes in document "${currentDoc}".`
+          : 'No YAML documents in this corpus.');
       return;
     }
 
@@ -127,7 +161,6 @@
     const h = window.innerHeight - 90;
     svg.attr('width', w).attr('height', h);
 
-    // One arrowhead marker per distinct edge colour so arrows match line colour.
     const defs = svg.append('defs');
     const colours = [...new Set(links.map(l => l.colour))];
     for (const c of colours) {
@@ -224,7 +257,8 @@
       ul.appendChild(li);
     };
 
-    addLi('schema', d.schema || '');
+    addLi('doc', d.doc || '');
+    if (d.schema) addLi('schema', d.schema);
     if (d.kind && d.kind !== '?') addLi('kind', d.kind);
     try {
       const attrs = JSON.parse(d.attrs_json || '{}');
@@ -236,7 +270,7 @@
       const warn = document.createElement('li');
       warn.style.cssText =
         'padding:4px 8px;margin-top:6px;background:#3a2a14;color:#f4c68a;';
-      warn.textContent = 'Referenced by edges but no YAML file found.';
+      warn.textContent = 'Referenced by edges but not declared in this document.';
       ul.appendChild(warn);
     }
     meta.appendChild(ul);
@@ -246,6 +280,6 @@
     window.flowstone?.loadBody?.(d.id);
   }
 
-  window.flowstoneYaml = { render };
+  window.flowstoneYaml = { init, setDoc, render };
   window.flowstone = Object.assign(window.flowstone || {}, { loadYamlNode });
 })();

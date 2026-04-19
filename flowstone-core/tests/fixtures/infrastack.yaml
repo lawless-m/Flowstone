@@ -1,0 +1,25 @@
+schema: infra
+
+x3customerpull:
+  kind: task
+  cadence: hourly
+  owner: ops
+  reads:
+    - x3-customer-api
+  writes:
+    - x3rocs-customer
+
+rivsprod02:
+  kind: machine
+  fqdn: rivsprod02.local
+  hosts:
+    - postgresql
+
+postgresql:
+  kind: service
+  serves:
+    - x3rocs
+
+x3rocs-customer:
+  kind: table
+  ddl_ref: schemas/x3rocs/customer.sql

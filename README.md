@@ -30,13 +30,14 @@ accumulates and hardens over time.
     builds the graph in the browser with no server. Live at
     <https://steponnopets.net/flowstone/>.
 
-The browser UI has four view tabs — the force-directed **Net**, a
-word-frequency **W-Cloud**, a **Tags** co-occurrence graph, and a
-**YAML** directed-graph tab that reads `*.yaml` / `*.yml` files in the
-corpus as typed graph nodes (useful for infra diagrams, data-flow
-sketches, and the like — see [YAML directed-graph](#yaml-directed-graph)
-below). The wasm build can also round-trip edits back to GitHub via
-the Contents API, for corpora served out of a repo.
+The browser UI has three fixed view tabs — the force-directed **Net**,
+a word-frequency **W-Cloud**, and a **Tags** co-occurrence graph — plus
+one dynamically-added tab per YAML nodes-document in the corpus, each
+rendering its own typed directed graph (useful for infra diagrams,
+data-flow sketches, and the like — see
+[YAML directed-graph](#yaml-directed-graph) below). The wasm build can
+also round-trip edits back to GitHub via the Contents API, for corpora
+served out of a repo.
 
 The Markdown files are always the source of truth. Flowstone itself
 never writes to disk — the GitHub round-trip is the user's own commit,
@@ -106,16 +107,23 @@ the browser is nudged over an event stream so the view stays current.
 
 ## YAML directed-graph
 
-The YAML tab ingests two kinds of document from the corpus, told apart
-by their contents (any `.yaml` / `.yml` file will do):
+The browser grows one tab per YAML **nodes-document** it finds in the
+corpus. Each tab renders that document's nodes and edges as its own
+typed directed graph; nothing crosses between tabs, so a corpus can
+carry any number of unrelated diagrams without them colliding.
+
+Two kinds of YAML file are recognised, told apart by their contents
+(any `.yaml` / `.yml` file will do — the filename is used only as an
+id):
 
 - A **schema** has `edges:` or `nodes:` at the top level. It declares
   the vocabulary: which edge kinds exist, which node kinds exist, and
   optional render hints (colour per edge, shape per node).
-- A **node** has `schema:` at the top level. It names the schema it
-  obeys (by filename stem, not full filename), optionally a `kind:`,
-  and then any keys whose names match an edge in that schema become
-  out-edges to other nodes.
+- A **nodes-document** has `schema:` at the top level naming the
+  schema it obeys (by filename stem). Every other top-level key is a
+  node id whose body carries optional `kind:`, attribute keys, and
+  edge keys (anything matching an edge name in the schema) pointing at
+  other node ids in the same document.
 
 Example schema (`infra.yaml`):
 
@@ -132,29 +140,45 @@ nodes:
   task:     { shape: diamond }
 ```
 
-Example node (`x3customerpull.yaml`):
+Example nodes-document (`infrastack.yaml`) — one file describing the
+whole relationship, each top-level key is a node:
 
 ```yaml
 schema: infra
-kind: task
-cadence: hourly
-owner: ops
-reads:
-  - x3-customer-api
-writes:
-  - x3rocs-customer
+
+x3customerpull:
+  kind: task
+  cadence: hourly
+  owner: ops
+  reads:
+    - x3-customer-api
+  writes:
+    - x3rocs-customer
+
+rivsprod02:
+  kind: machine
+  fqdn: rivsprod02.local
+  hosts:
+    - postgresql
+
+postgresql:
+  kind: service
+
+x3rocs-customer:
+  kind: table
+  ddl_ref: schemas/x3rocs/customer.sql
 ```
 
-Node ids are the filename (without extension), so `reads:` here points
-at a sibling YAML file called `x3-customer-api.yaml`. Targets with no
-YAML file of their own still appear in the graph as dashed placeholder
-nodes, which is often the quickest way to notice that a design sketch
-has a hole in it. A node can also have a sibling Markdown file of the
-same stem (`x3customerpull.md`) — the detail pane will load it
-automatically, so the DDL or design doc travels with the node.
+Edge targets that aren't declared as nodes in the same document still
+appear on the graph as dashed placeholder nodes — often the quickest
+way to notice that a design sketch has a hole in it. A node can also
+have a sibling Markdown file of the same stem (e.g. `x3customerpull.md`)
+— the detail pane will load it automatically, so the DDL or design doc
+travels with the node.
 
-Cross-schema edges are not supported: a node declared under one schema
-can only target nodes under the same schema.
+Each nodes-document is scoped to itself: edges never cross document
+boundaries, so the same node id can mean different things in different
+diagrams without confusion.
 
 ## Repo layout
 

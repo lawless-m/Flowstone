@@ -797,14 +797,19 @@
     document.querySelectorAll('.view-tab').forEach(b => {
       b.classList.toggle('active', b.dataset.view === view);
     });
+    const isYaml = view === 'yaml' || view.startsWith('yaml-');
     document.getElementById('graph').style.display      = view === 'net'    ? 'block' : 'none';
     document.getElementById('cloud').style.display      = view === 'cloud'  ? 'block' : 'none';
     document.getElementById('tag-net').style.display    = view === 'tagnet' ? 'block' : 'none';
-    document.getElementById('yaml-graph').style.display = view === 'yaml'   ? 'block' : 'none';
+    document.getElementById('yaml-graph').style.display = isYaml            ? 'block' : 'none';
     document.getElementById('tags').style.display       = view === 'net'    ? 'block' : 'none';
     if (view === 'cloud')  renderCloud();
     if (view === 'tagnet') renderTagNet();
-    if (view === 'yaml')   window.flowstoneYaml?.render?.();
+    if (isYaml) {
+      const doc = view === 'yaml' ? null : view.slice('yaml-'.length);
+      window.flowstoneYaml?.setDoc?.(doc);
+      window.flowstoneYaml?.render?.();
+    }
   }
 
   document.querySelectorAll('.view-tab').forEach(b => {
@@ -821,6 +826,7 @@
   window.flowstone = Object.assign(window.flowstone || {}, {
     loadBody,
     showTagDetails,
+    setView,
     reload: () => Promise.all([loadGraph(), loadTags(), loadTagGraph()]),
     selectByPath: async (path) => {
       await Promise.all([loadGraph(), loadTags(), loadTagGraph()]);

@@ -1,22 +1,24 @@
-//! Populate cozo from parsed YAML nodes + schemas.
+//! Populate cozo from parsed YAML schemas + nodes-documents.
 //!
-//! Two classes of relation:
+//! Relations:
 //!
-//! - A single meta relation `yaml_nodes { path => schema, kind, attrs_json }`
-//!   stores every node from every schema.
-//! - Per-(schema,edge-kind) relations of the form `<prefix>_<edge>` where
-//!   `<prefix>` is the schema's filename stem with non-alphanumerics
-//!   replaced with `_`. E.g. schema `infra` + edge `reads` →
-//!   `infra_reads { source: String, target: String }`.
+//! - `yaml_docs { doc => schema }` — one row per nodes-document, so
+//!   the UI can enumerate tabs.
+//! - `yaml_nodes { id, doc => kind, attrs_json }` — every node from
+//!   every document.
+//! - Per-(doc, edge-kind) relations `<prefix>_<edge>` where `<prefix>`
+//!   is the doc stem with non-alphanumerics replaced with `_`.
+//!   E.g. doc `infrastack` + edge `reads` → `infrastack_reads
+//!   { source: String, target: String }`.
 //!
-//! This keeps schemas disjoint at the relation level and matches how a
-//! user would write queries: `?[s, t] := *infra_reads[s, t]`.
+//! Scoping by document (not schema) means each nodes-document becomes
+//! its own tab with its own relations — no accidental cross-file edges.
 
 use std::collections::BTreeMap;
 
 use cozo::{DataValue, Db, ScriptMutability, Storage};
 
-use crate::yaml::{RawNode, Schema, YamlEdge, YamlNode, resolve_node};
+use crate::yaml::{NodeDoc, Schema, YamlEdge, YamlNode, resolve_node};
 
 pub struct YamlLoadStats {
     pub nodes: usize,
@@ -24,26 +26,30 @@ pub struct YamlLoadStats {
     pub warnings: Vec<String>,
 }
 
-/// Normalise a schema name into a safe cozo relation prefix —
-/// non-alphanumerics become `_`. e.g. `my-domain` → `my_domain`.
-pub fn schema_prefix(schema_name: &str) -> String {
-    schema_name
+/// Normalise a doc name into a safe cozo relation prefix —
+/// non-alphanumerics become `_`. e.g. `my-stack` → `my_stack`.
+pub fn doc_prefix(doc_id: &str) -> String {
+    doc_id
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect()
 }
 
-pub fn edge_relation_name(schema_name: &str, edge_kind: &str) -> String {
-    format!("{}_{}", schema_prefix(schema_name), edge_kind)
+pub fn edge_relation_name(doc_id: &str, edge_kind: &str) -> String {
+    format!("{}_{}", doc_prefix(doc_id), edge_kind)
 }
 
-pub fn create_yaml_schema<S>(db: &Db<S>)
+fn create_meta<S>(db: &Db<S>)
 where
     S: for<'s> Storage<'s> + 'static,
 {
+    let _ = db.run_default("::remove yaml_docs");
+    db.run_default(":create yaml_docs { doc: String => schema: String }")
+        .expect("create yaml_docs");
+
     let _ = db.run_default("::remove yaml_nodes");
     db.run_default(
-        ":create yaml_nodes { path: String => schema: String, kind: String, attrs_json: String }",
+        ":create yaml_nodes { id: String, doc: String => kind: String, attrs_json: String }",
     )
     .expect("create yaml_nodes");
 }
@@ -59,7 +65,34 @@ where
     .unwrap_or_else(|e| panic!("create {name}: {e}"));
 }
 
-pub fn load_yaml_nodes<S>(db: &Db<S>, nodes: &[YamlNode])
+fn load_docs<S>(db: &Db<S>, docs: &[(String, String)])
+where
+    S: for<'s> Storage<'s> + 'static,
+{
+    if docs.is_empty() {
+        return;
+    }
+    let rows: Vec<DataValue> = docs
+        .iter()
+        .map(|(doc, schema)| {
+            DataValue::List(vec![
+                DataValue::Str(doc.as_str().into()),
+                DataValue::Str(schema.as_str().into()),
+            ])
+        })
+        .collect();
+    let mut params = BTreeMap::new();
+    params.insert("data".to_string(), DataValue::List(rows));
+    if let Err(e) = db.run_script(
+        "?[doc, schema] <- $data :put yaml_docs {doc => schema}",
+        params,
+        ScriptMutability::Mutable,
+    ) {
+        eprintln!("Warning: failed to insert yaml_docs: {e}");
+    }
+}
+
+fn load_nodes<S>(db: &Db<S>, doc_id: &str, nodes: &[YamlNode])
 where
     S: for<'s> Storage<'s> + 'static,
 {
@@ -71,8 +104,8 @@ where
         .map(|n| {
             let attrs_json = serde_json::to_string(&n.attrs).unwrap_or_else(|_| "{}".into());
             DataValue::List(vec![
-                DataValue::Str(n.path.as_str().into()),
-                DataValue::Str(n.schema.as_str().into()),
+                DataValue::Str(n.id.as_str().into()),
+                DataValue::Str(doc_id.into()),
                 DataValue::Str(n.kind.as_deref().unwrap_or("").into()),
                 DataValue::Str(attrs_json.into()),
             ])
@@ -83,8 +116,8 @@ where
     params.insert("data".to_string(), DataValue::List(rows));
 
     if let Err(e) = db.run_script(
-        "?[path, schema, kind, attrs_json] <- $data \
-         :put yaml_nodes {path => schema, kind, attrs_json}",
+        "?[id, doc, kind, attrs_json] <- $data \
+         :put yaml_nodes {id, doc => kind, attrs_json}",
         params,
         ScriptMutability::Mutable,
     ) {
@@ -118,54 +151,78 @@ where
     }
 }
 
-/// One-shot pipeline: resolve each raw node against its schema, create
-/// the meta + per-edge relations, then bulk-insert.
+/// One-shot pipeline: resolve every node in every doc against its
+/// schema, create the meta + per-edge relations, then bulk-insert.
 pub fn build_yaml<S>(
     db: &Db<S>,
     schemas: &BTreeMap<String, Schema>,
-    raw_nodes: Vec<RawNode>,
+    docs: Vec<NodeDoc>,
 ) -> YamlLoadStats
 where
     S: for<'s> Storage<'s> + 'static,
 {
     let mut warnings = Vec::new();
-    let mut nodes: Vec<YamlNode> = Vec::with_capacity(raw_nodes.len());
 
-    // edges grouped by target relation name (e.g. "infra_reads")
+    // Resolve every doc's nodes so we know what edges exist before
+    // creating relations. `resolved[doc_id] = (schema_name, [YamlNode])`.
+    let mut resolved: Vec<(String, String, Vec<YamlNode>)> = Vec::with_capacity(docs.len());
+    // edges grouped by target relation name (e.g. "infrastack_reads")
     let mut edges_by_relation: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
 
-    for raw in raw_nodes {
-        let schema = schemas.get(&raw.schema);
+    for doc in docs {
+        let NodeDoc {
+            doc_id,
+            schema: schema_name,
+            nodes: raw_nodes,
+        } = doc;
+        let schema = schemas.get(&schema_name);
         if schema.is_none() {
             warnings.push(format!(
-                "{}: schema `{}` not found in corpus; all keys treated as attrs",
-                raw.path, raw.schema
+                "{doc_id}: schema `{schema_name}` not found in corpus; all keys treated as attrs",
             ));
         }
-        let schema_name = raw.schema.clone();
-        let (node, mut warns) = resolve_node(raw, schema);
-        warnings.append(&mut warns);
 
-        for YamlEdge { kind, target } in &node.edges {
-            let rel = edge_relation_name(&schema_name, kind);
-            edges_by_relation
-                .entry(rel)
-                .or_default()
-                .push((node.path.clone(), target.clone()));
+        let mut resolved_nodes = Vec::with_capacity(raw_nodes.len());
+        for raw in raw_nodes {
+            let (node, mut warns) = resolve_node(raw, schema);
+            warnings.append(&mut warns);
+            for YamlEdge { kind, target } in &node.edges {
+                let rel = edge_relation_name(&doc_id, kind);
+                edges_by_relation
+                    .entry(rel)
+                    .or_default()
+                    .push((node.id.clone(), target.clone()));
+            }
+            resolved_nodes.push(node);
         }
-        nodes.push(node);
+
+        resolved.push((doc_id, schema_name, resolved_nodes));
     }
 
-    // Create relations
-    create_yaml_schema(db);
-    for (schema_name, schema) in schemas {
-        for edge_kind in schema.edges.keys() {
-            create_edge_relation(db, &edge_relation_name(schema_name, edge_kind));
+    // Create meta relations and one edge relation per (doc, edge_kind)
+    // that the doc's schema declares.
+    create_meta(db);
+    for (doc_id, schema_name, _) in &resolved {
+        if let Some(schema) = schemas.get(schema_name) {
+            for edge_kind in schema.edges.keys() {
+                create_edge_relation(db, &edge_relation_name(doc_id, edge_kind));
+            }
         }
     }
 
     // Seed rows
-    load_yaml_nodes(db, &nodes);
+    let doc_rows: Vec<(String, String)> = resolved
+        .iter()
+        .map(|(doc_id, schema_name, _)| (doc_id.clone(), schema_name.clone()))
+        .collect();
+    load_docs(db, &doc_rows);
+
+    let mut node_count = 0;
+    for (doc_id, _, nodes) in &resolved {
+        node_count += nodes.len();
+        load_nodes(db, doc_id, nodes);
+    }
+
     let mut edge_count = 0;
     for (rel, edges) in &edges_by_relation {
         edge_count += edges.len();
@@ -173,7 +230,7 @@ where
     }
 
     YamlLoadStats {
-        nodes: nodes.len(),
+        nodes: node_count,
         edges: edge_count,
         warnings,
     }
@@ -182,63 +239,57 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::yaml::{parse_node, parse_schema};
+    use crate::yaml::{parse_node_doc, parse_schema};
     use cozo::new_cozo_mem;
 
     const INFRA_SCHEMA: &str = include_str!("../tests/fixtures/infra.yaml");
-    const X3CUSTOMERPULL: &str = include_str!("../tests/fixtures/nodes/x3customerpull.yaml");
-    const RIVSPROD02: &str = include_str!("../tests/fixtures/nodes/rivsprod02.yaml");
-    const POSTGRESQL: &str = include_str!("../tests/fixtures/nodes/postgresql.yaml");
-    const X3ROCS_CUSTOMER: &str = include_str!("../tests/fixtures/nodes/x3rocs-customer.yaml");
+    const INFRASTACK: &str = include_str!("../tests/fixtures/infrastack.yaml");
 
-    fn corpus() -> (BTreeMap<String, Schema>, Vec<RawNode>) {
+    fn corpus() -> (BTreeMap<String, Schema>, Vec<NodeDoc>) {
         let mut schemas = BTreeMap::new();
         schemas.insert("infra".to_string(), parse_schema(INFRA_SCHEMA).unwrap());
-        let raws = vec![
-            parse_node(X3CUSTOMERPULL, "x3customerpull".into()).unwrap(),
-            parse_node(RIVSPROD02, "rivsprod02".into()).unwrap(),
-            parse_node(POSTGRESQL, "postgresql".into()).unwrap(),
-            parse_node(X3ROCS_CUSTOMER, "x3rocs-customer".into()).unwrap(),
-        ];
-        (schemas, raws)
+        let docs = vec![parse_node_doc(INFRASTACK, "infrastack".to_string()).unwrap()];
+        (schemas, docs)
     }
 
     #[test]
-    fn prefix_sanitises_schema_name() {
-        assert_eq!(schema_prefix("infra"), "infra");
-        assert_eq!(schema_prefix("my-domain"), "my_domain");
-        assert_eq!(schema_prefix("weird.name"), "weird_name");
+    fn prefix_sanitises_doc_id() {
+        assert_eq!(doc_prefix("infrastack"), "infrastack");
+        assert_eq!(doc_prefix("my-stack"), "my_stack");
+        assert_eq!(doc_prefix("weird.name"), "weird_name");
     }
 
     #[test]
-    fn build_populates_nodes_and_per_kind_edges() {
+    fn build_populates_docs_nodes_and_per_kind_edges() {
         let db = new_cozo_mem().unwrap();
-        let (schemas, raws) = corpus();
-        let stats = build_yaml(&db, &schemas, raws);
+        let (schemas, docs) = corpus();
+        let stats = build_yaml(&db, &schemas, docs);
         assert!(stats.warnings.is_empty(), "warns: {:?}", stats.warnings);
         assert_eq!(stats.nodes, 4);
-        assert!(stats.edges >= 4); // reads, writes, hosts, serves
+        assert!(stats.edges >= 4);
+
+        // yaml_docs has one row
+        let r = db.run_default("?[doc, schema] := *yaml_docs{doc, schema}").unwrap();
+        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.rows[0][0].get_str().unwrap(), "infrastack");
+        assert_eq!(r.rows[0][1].get_str().unwrap(), "infra");
 
         // yaml_nodes count
-        let r = db
-            .run_default("?[count(path)] := *yaml_nodes{path}")
-            .unwrap();
+        let r = db.run_default("?[count(id)] := *yaml_nodes{id}").unwrap();
         assert_eq!(r.rows[0][0].get_int().unwrap(), 4);
 
-        // infra_reads has one row: x3customerpull -> x3-customer-api
-        let r = db
-            .run_default("?[s, t] := *infra_reads[s, t]")
-            .unwrap();
+        // infrastack_reads has one row: x3customerpull -> x3-customer-api
+        let r = db.run_default("?[s, t] := *infrastack_reads[s, t]").unwrap();
         assert_eq!(r.rows.len(), 1);
         assert_eq!(r.rows[0][0].get_str().unwrap(), "x3customerpull");
         assert_eq!(r.rows[0][1].get_str().unwrap(), "x3-customer-api");
 
-        // infra_writes has one row
-        let r = db.run_default("?[s, t] := *infra_writes[s, t]").unwrap();
+        // infrastack_writes has one row
+        let r = db.run_default("?[s, t] := *infrastack_writes[s, t]").unwrap();
         assert_eq!(r.rows.len(), 1);
 
-        // infra_hosts has rivsprod02 → postgresql
-        let r = db.run_default("?[s, t] := *infra_hosts[s, t]").unwrap();
+        // infrastack_hosts has rivsprod02 → postgresql
+        let r = db.run_default("?[s, t] := *infrastack_hosts[s, t]").unwrap();
         assert_eq!(r.rows.len(), 1);
         assert_eq!(r.rows[0][0].get_str().unwrap(), "rivsprod02");
     }
@@ -246,12 +297,12 @@ mod tests {
     #[test]
     fn attrs_serialise_as_json() {
         let db = new_cozo_mem().unwrap();
-        let (schemas, raws) = corpus();
-        build_yaml(&db, &schemas, raws);
+        let (schemas, docs) = corpus();
+        build_yaml(&db, &schemas, docs);
 
         let r = db
             .run_default(
-                "?[attrs_json] := *yaml_nodes{path, attrs_json}, path = 'x3customerpull'",
+                "?[attrs_json] := *yaml_nodes{id, doc, attrs_json}, id = 'x3customerpull'",
             )
             .unwrap();
         let json = r.rows[0][0].get_str().unwrap();

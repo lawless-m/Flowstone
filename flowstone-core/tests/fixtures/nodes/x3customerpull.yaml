@@ -1,8 +1,0 @@
-schema: infra
-kind: task
-cadence: hourly
-owner: ops
-reads:
-  - x3-customer-api
-writes:
-  - x3rocs-customer
