@@ -5,6 +5,27 @@
     set: (k, v) => localStorage.setItem('flowstone_gh_' + k, v),
   };
 
+  // CodeMirror 6 is ESM-only, but this file is loaded as a plain script.
+  // Dynamic-import once, cache the Promise — esm.sh dedupes the shared
+  // @codemirror/state + view instances across the three packages.
+  let cmReady = null;
+  function loadCodeMirror() {
+    if (!cmReady) {
+      cmReady = Promise.all([
+        import('https://esm.sh/codemirror@6.0.1'),
+        import('https://esm.sh/@codemirror/lang-markdown@6.2.5'),
+        import('https://esm.sh/@codemirror/theme-one-dark@6.1.2'),
+      ]).then(([cm, md, theme]) => ({
+        EditorView: cm.EditorView,
+        basicSetup: cm.basicSetup,
+        markdown: md.markdown,
+        oneDark: theme.oneDark,
+      }));
+    }
+    return cmReady;
+  }
+  let currentView = null;
+
   // ---- multi-repo storage ----
   function getRepos() {
     try { return JSON.parse(localStorage.getItem('flowstone_repos') || '[]'); }
@@ -114,11 +135,14 @@
     }
     #gh-modal-status { font-size: 11px; padding: 2px 8px; border-radius: 3px; }
     #gh-editor-panes { flex: 1; display: flex; overflow: hidden; }
-    #gh-editor-ta {
-      flex: 1; resize: none; border: none;
+    #gh-editor-cm {
+      flex: 1; overflow: hidden;
       border-right: 1px solid #0f3460;
-      background: #0f0f1a; color: #e0e0e0;
-      padding: 16px; outline: none;
+      background: #0f0f1a;
+    }
+    #gh-editor-cm .cm-editor { height: 100%; outline: none; }
+    #gh-editor-cm .cm-editor.cm-focused { outline: none; }
+    #gh-editor-cm .cm-scroller {
       font-family: ui-monospace, 'SF Mono', Menlo, monospace;
       font-size: 13px; line-height: 1.6;
     }
@@ -443,54 +467,75 @@
     const panes = document.createElement('div');
     panes.id = 'gh-editor-panes';
 
-    const ta = document.createElement('textarea');
-    ta.id = 'gh-editor-ta';
-    ta.setAttribute('spellcheck', 'true');
+    const host = document.createElement('div');
+    host.id = 'gh-editor-cm';
 
     // Auto-restore draft if one exists and differs from the saved content.
     const draftPath = isNew ? null : path;
     const draft = loadDraft(draftPath);
+    let initialDoc = markdown;
     if (draft && draft.content !== markdown) {
-      ta.value = draft.content;
+      initialDoc = draft.content;
       const ago = Math.max(1, Math.round((Date.now() - draft.savedAt) / 60000));
       setTimeout(() => setModalStatus(`Draft auto-restored (saved ${ago}m ago)`), 0);
-    } else {
-      ta.value = markdown;
     }
 
     const preview = document.createElement('div');
     preview.id = 'gh-editor-preview';
     preview.className = 'markdown-body';
 
-    const updatePreview = () => {
+    const renderPreview = (text) => {
       preview.innerHTML = typeof marked !== 'undefined'
-        ? marked.parse(ta.value)
-        : ta.value.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        ? marked.parse(text)
+        : text.replace(/&/g,'&amp;').replace(/</g,'&lt;');
     };
-    updatePreview();
+    renderPreview(initialDoc);
 
-    let debounce, draftDebounce;
-    ta.addEventListener('input', () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(updatePreview, 150);
-      clearTimeout(draftDebounce);
-      draftDebounce = setTimeout(() => saveDraft(draftPath, ta.value), 1000);
-    });
-
-    ta.addEventListener('keydown', e => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key === 's') { e.preventDefault(); saveFromModal(isNew ? null : path, isNew); }
-      if (e.key === 'Escape')   { e.preventDefault(); closeEditor(isNew ? null : path); }
-    });
-
-    panes.append(ta, preview);
+    panes.append(host, preview);
     overlay.append(bar, panes);
     document.body.appendChild(overlay);
-    ta.focus();
+
+    loadCodeMirror().then(({ EditorView, basicSetup, markdown: mdLang, oneDark }) => {
+      if (!document.body.contains(host)) return; // editor closed before CM loaded
+
+      let previewDebounce, draftDebounce;
+      const onDocChange = (text) => {
+        clearTimeout(previewDebounce);
+        previewDebounce = setTimeout(() => renderPreview(text), 150);
+        clearTimeout(draftDebounce);
+        draftDebounce = setTimeout(() => saveDraft(draftPath, text), 1000);
+      };
+
+      currentView = new EditorView({
+        doc: initialDoc,
+        parent: host,
+        extensions: [
+          basicSetup,
+          mdLang(),
+          oneDark,
+          EditorView.lineWrapping,
+          EditorView.updateListener.of(u => {
+            if (u.docChanged) onDocChange(u.state.doc.toString());
+          }),
+        ],
+      });
+
+      currentView.dom.addEventListener('keydown', e => {
+        const mod = e.ctrlKey || e.metaKey;
+        if (mod && e.key === 's') { e.preventDefault(); saveFromModal(isNew ? null : path, isNew); }
+        if (e.key === 'Escape')   { e.preventDefault(); closeEditor(isNew ? null : path); }
+      });
+
+      currentView.focus();
+    }).catch(err => {
+      console.error('[github-save] CodeMirror load failed:', err);
+      setModalStatus('Editor failed to load — check console.', 'err');
+    });
   }
 
   function closeEditor(path) {
     clearDraft(path); // path is null for new notes, that's the correct draft key
+    if (currentView) { currentView.destroy(); currentView = null; }
     document.getElementById('gh-editor-overlay')?.remove();
     if (path) window.flowstone?.loadBody(path);
   }
@@ -713,8 +758,7 @@
 
   // ---- GitHub API ----
   async function saveFromModal(path, isNew) {
-    const ta = document.getElementById('gh-editor-ta');
-    if (!ta) return;
+    if (!currentView) return;
 
     let notePath = path;
     if (isNew) {
@@ -723,12 +767,14 @@
       if (!notePath) { setModalStatus('Enter a note name.', 'err'); input?.focus(); return; }
     }
 
-    const content = ta.value.replace(/\{\{title\}\}/g, notePath);
+    const content = currentView.state.doc.toString().replace(/\{\{title\}\}/g, notePath);
     const ok = await saveToGitHub(content, notePath, isNew);
     if (!ok) return;
 
     await syncLocalDb(notePath, content);
     clearDraft(isNew ? null : notePath);
+    currentView.destroy();
+    currentView = null;
     document.getElementById('gh-editor-overlay')?.remove();
     await window.flowstone?.selectByPath?.(notePath);
   }
