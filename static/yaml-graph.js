@@ -182,6 +182,15 @@
     const container = svg.append('g');
     svg.call(d3.zoom().on('zoom', (e) => container.attr('transform', e.transform)));
 
+    const r = 10;
+    // Create the simulation before the drag handlers register so their
+    // closures can resolve `sim` if d3 fires a synthetic end event.
+    const sim = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(70))
+      .force('charge', d3.forceManyBody().strength(-200))
+      .force('center', d3.forceCenter(w / 2, h / 2))
+      .force('collide', d3.forceCollide().radius(r + 8));
+
     const link = container.append('g')
       .attr('stroke-opacity', 0.75)
       .selectAll('line')
@@ -203,7 +212,6 @@
         .on('end',   (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }))
       .on('click', (_, d) => window.flowstone?.loadYamlNode?.(d));
 
-    const r = 10;
     node.each(function (d) {
       const g = d3.select(this);
       drawShape(g, d.shape, r);
@@ -222,17 +230,12 @@
       .attr('fill', '#c0c0c0')
       .text(d => d.id);
 
-    const sim = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id(d => d.id).distance(70))
-      .force('charge', d3.forceManyBody().strength(-200))
-      .force('center', d3.forceCenter(w / 2, h / 2))
-      .force('collide', d3.forceCollide().radius(r + 8))
-      .on('tick', () => {
-        link
-          .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-          .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-        node.attr('transform', d => `translate(${d.x},${d.y})`);
-      });
+    sim.on('tick', () => {
+      link
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      node.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
   }
 
   function loadYamlNode(d) {
