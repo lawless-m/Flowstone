@@ -87,8 +87,10 @@
           colour: spec.colour || '#7f8fa6',
           directed: spec.directed !== false,
         });
-        if (!nodeMap.has(t)) {
-          nodeMap.set(t, { id: t, doc: currentDoc, schema: schemaName, kind: '?', attrs_json: '{}', phantom: true });
+        for (const id of [s, t]) {
+          if (!nodeMap.has(id)) {
+            nodeMap.set(id, { id, doc: currentDoc, schema: schemaName, kind: '?', attrs_json: '{}', phantom: true });
+          }
         }
       }
     }
