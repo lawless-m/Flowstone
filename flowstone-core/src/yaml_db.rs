@@ -188,10 +188,25 @@ where
             warnings.append(&mut warns);
             for YamlEdge { kind, target } in &node.edges {
                 let rel = edge_relation_name(&doc_id, kind);
-                edges_by_relation
-                    .entry(rel)
-                    .or_default()
-                    .push((node.id.clone(), target.clone()));
+                // If the schema declares this node's kind as the edge's
+                // `to`, treat the declaring node as the target and the
+                // listed value as the source. Lets a task write
+                // `selects: [some_record]` while the schema reads
+                // `selects: from: recordset, to: task` — the arrow
+                // renders records → task, matching the data-flow.
+                let edge_spec = schema.and_then(|s| s.edges.get(kind));
+                let flip = matches!(
+                    (edge_spec, node.kind.as_deref()),
+                    (Some(spec), Some(k))
+                        if spec.to.as_deref() == Some(k)
+                        && spec.from.as_deref() != Some(k)
+                );
+                let (src, tgt) = if flip {
+                    (target.clone(), node.id.clone())
+                } else {
+                    (node.id.clone(), target.clone())
+                };
+                edges_by_relation.entry(rel).or_default().push((src, tgt));
             }
             resolved_nodes.push(node);
         }
