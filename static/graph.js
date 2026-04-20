@@ -14,9 +14,10 @@
 
   // Initialise display state using inline styles so setView's style.display
   // assignments always win over HTML `hidden` attributes + UA stylesheet.
-  document.getElementById('cloud').style.display    = 'none';
-  document.getElementById('tag-net').style.display  = 'none';
-  document.getElementById('tags').style.display     = 'block';
+  document.getElementById('cloud').style.display      = 'none';
+  document.getElementById('tag-net').style.display    = 'none';
+  document.getElementById('yaml-graph').style.display = 'none';
+  document.getElementById('tags').style.display       = 'block';
 
   async function loadTagGraph() {
     try {
@@ -304,9 +305,9 @@
   function render() {
     svg.selectAll('*').remove();
 
-    const main = document.querySelector('main');
-    const w = main.clientWidth;
-    const h = main.clientHeight;
+    const graphEl = svg.node();
+    const w = graphEl.clientWidth;
+    const h = graphEl.clientHeight;
     svg.attr('viewBox', `0 0 ${w} ${h}`);
 
     const container = svg.append('g');
@@ -535,10 +536,10 @@
       item.textContent = h.title || h.path;
       item.addEventListener('mousedown', e => {
         e.preventDefault();
-        window.flowstone?.loadBody(h.path);
+        const node = graph.nodes.find(n => n.id === h.path);
+        if (node) selectNode(node); else loadBody(h.path);
         clearSearchDropdown();
         document.getElementById('search').value = '';
-        clearDimming();
       });
       drop.appendChild(item);
     }
@@ -820,6 +821,20 @@
     if (currentView === 'cloud')  renderCloud();
     if (currentView === 'tagnet') { tagNetDirty = true; renderTagNet(); }
   });
+
+  // Keep the force-graph viewBox and centre aligned with <main> as it grows
+  // or shrinks (window resize, details panel opening/closing, etc).
+  const mainEl = document.querySelector('main');
+  const graphEl = svg.node();
+  new ResizeObserver(() => {
+    if (currentView !== 'net' || !simulation) return;
+    const w = graphEl.clientWidth;
+    const h = graphEl.clientHeight;
+    if (w <= 0 || h <= 0) return;
+    svg.attr('viewBox', `0 0 ${w} ${h}`);
+    simulation.force('center', d3.forceCenter(w / 2, h / 2));
+    simulation.alpha(0.3).restart();
+  }).observe(graphEl);
 
   // Merge with any keys yaml-graph.js (or other loaders) may have
   // already planted on window.flowstone, rather than replacing wholesale.
