@@ -8,6 +8,7 @@
 // back to a ranked substring sweep on non-fts hosts.
 
 export function installShim(fs) {
+  window.fs = fs;
   const originalFetch = window.fetch.bind(window);
 
   window.fetch = async function (input, init) {
